@@ -109,18 +109,6 @@ public final class PanelFactory {
         return ActionRow.of(menu.build());
     }
 
-    public ActionRow feedbackButtons(long ticketId, long staffId) {
-        return ActionRow.of(
-                rating(ticketId, staffId, 1), rating(ticketId, staffId, 2),
-                rating(ticketId, staffId, 3), rating(ticketId, staffId, 4),
-                rating(ticketId, staffId, 5)
-        );
-    }
-
-    private Button rating(long ticketId, long staffId, int score) {
-        return Button.secondary("ticket:rating:" + ticketId + ":" + staffId + ":" + score, score + " ⭐");
-    }
-
     public MessageEmbed moderationPanel(long activeWarns, long sanctionedUsers) {
         return new EmbedBuilder()
                 .setColor(new Color(88, 101, 242))
