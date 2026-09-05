@@ -22,9 +22,14 @@ import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.modals.Modal;
+import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.Color;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -119,8 +124,21 @@ public final class ControlPanelListener extends ListenerAdapter {
         event.deferReply(true).queue();
         event.getChannel().sendMessageEmbeds(panels.ticketPanel())
                 .setComponents(panels.ticketMenu())
+                .addFiles(ticketPanelImage())
                 .queue(message -> event.getHook().editOriginal("✅ Panel de tickets publicado.").queue(),
                         error -> event.getHook().editOriginal("❌ No se pudo publicar: " + error.getMessage()).queue());
+    }
+
+    private FileUpload ticketPanelImage() {
+        try (InputStream input = ControlPanelListener.class
+                .getResourceAsStream("/assets/isla-spider-panel.jpg.b64")) {
+            if (input == null) throw new IllegalStateException("No se encontró la imagen del panel");
+            String encoded = new String(input.readAllBytes(), StandardCharsets.US_ASCII);
+            byte[] image = Base64.getMimeDecoder().decode(encoded);
+            return FileUpload.fromData(image, PanelFactory.PANEL_IMAGE_NAME);
+        } catch (IOException exception) {
+            throw new IllegalStateException("No se pudo cargar la imagen del panel", exception);
+        }
     }
 
     private void publishModerationPanel(ButtonInteractionEvent event) {
