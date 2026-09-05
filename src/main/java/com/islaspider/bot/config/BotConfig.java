@@ -12,6 +12,9 @@ public record BotConfig(
         long guildId,
         long ticketCategoryId,
         long ticketLogChannelId,
+        long ticketImageChannelId,
+        long ticketTranscriptChannelId,
+        long ticketRatingChannelId,
         long appealLogChannelId,
         long staffRoleId,
         long moderatorRoleId,
@@ -45,11 +48,15 @@ public record BotConfig(
         loadDotEnv(Path.of(".env"), values);
         values.putAll(System.getenv());
 
+        long ticketLogChannelId = requiredId(values, "TICKET_LOG_CHANNEL_ID");
         return new BotConfig(
                 required(values, "DISCORD_TOKEN"),
                 requiredId(values, "GUILD_ID"),
                 requiredId(values, "TICKET_CATEGORY_ID"),
-                requiredId(values, "TICKET_LOG_CHANNEL_ID"),
+                ticketLogChannelId,
+                optionalId(values, "TICKET_IMAGE_CHANNEL_ID", ticketLogChannelId),
+                optionalId(values, "TICKET_TRANSCRIPT_CHANNEL_ID", ticketLogChannelId),
+                optionalId(values, "TICKET_RATING_CHANNEL_ID", ticketLogChannelId),
                 requiredId(values, "APPEAL_LOG_CHANNEL_ID"),
                 requiredId(values, "STAFF_ROLE_ID"),
                 requiredId(values, "MOD_ROLE_ID"),
@@ -110,6 +117,18 @@ public record BotConfig(
             if (id == 0) {
                 throw new NumberFormatException("cero");
             }
+            return id;
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException(key + " debe ser un ID numerico valido de Discord", exception);
+        }
+    }
+
+    private static long optionalId(Map<String, String> values, String key, long defaultValue) {
+        String value = values.get(key);
+        if (value == null || value.isBlank() || value.equals("000000000000000000")) return defaultValue;
+        try {
+            long id = Long.parseUnsignedLong(value.trim());
+            if (id == 0) throw new NumberFormatException("cero");
             return id;
         } catch (NumberFormatException exception) {
             throw new IllegalStateException(key + " debe ser un ID numerico valido de Discord", exception);
