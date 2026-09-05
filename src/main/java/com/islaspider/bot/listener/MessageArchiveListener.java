@@ -12,7 +12,6 @@ import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.Color;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -42,37 +41,38 @@ public final class MessageArchiveListener extends ListenerAdapter {
         tickets.saveMessage(ticket.id(), message.getIdLong(), event.getAuthor().getIdLong(),
                 event.getAuthor().getEffectiveName(), message.getContentRaw(), createdAt);
 
-        List<String> loggedUrls = new ArrayList<>();
         for (Message.Attachment attachment : message.getAttachments()) {
             tickets.saveAttachment(ticket.id(), message.getIdLong(), event.getAuthor().getIdLong(), "FILE",
                     attachment.getFileName(), attachment.getUrl(), attachment.getContentType(), (long) attachment.getSize(), createdAt);
-            loggedUrls.add(attachment.getUrl());
         }
 
         Set<String> links = extractLinks(message.getContentRaw());
         for (String link : links) {
             tickets.saveAttachment(ticket.id(), message.getIdLong(), event.getAuthor().getIdLong(), "LINK",
                     null, link, null, null, createdAt);
-            loggedUrls.add(link);
         }
-        if (!loggedUrls.isEmpty()) sendEvidenceLog(event, ticket, message.getAttachments().size(), links, loggedUrls);
+        if (!message.getAttachments().isEmpty() || !links.isEmpty()) {
+            sendEvidenceLog(event, ticket, message.getAttachments().size(), links);
+        }
     }
 
     private void sendEvidenceLog(MessageReceivedEvent event, Ticket ticket, int fileCount,
-                                 Set<String> links, List<String> allUrls) {
-        TextChannel log = event.getGuild().getTextChannelById(config.ticketLogChannelId());
+                                 Set<String> links) {
+        TextChannel log = event.getGuild().getTextChannelById(config.ticketImageChannelId());
         if (log == null) return;
-        StringBuilder urls = new StringBuilder();
-        allUrls.stream().limit(10).forEach(url -> urls.append(url).append('\n'));
+        StringBuilder linkText = new StringBuilder();
+        links.stream().limit(10).forEach(url -> linkText.append(url).append('\n'));
+        String title = fileCount > 0
+                ? (links.isEmpty() ? "📎 Archivo enviado en ticket" : "🎬 Archivo o enlace enviado en ticket")
+                : "🎬 Enlace enviado en ticket";
         EmbedBuilder embed = new EmbedBuilder()
                 .setColor(new Color(52, 152, 219))
-                .setTitle(fileCount > 0 ? "📎 Archivo o enlace enviado en ticket" : "🎬 Enlace enviado en ticket")
-                .addField("Ticket", event.getChannel().getAsMention() + " (#" + ticket.id() + ")", true)
+                .setTitle(title)
+                .addField("Ticket", event.getChannel().getAsMention(), true)
                 .addField("Enviado por", event.getAuthor().getAsMention(), true)
                 .addField("Archivos", String.valueOf(fileCount), true)
-                .addField("Enlaces", String.valueOf(links.size()), true)
-                .addField("Contenido", truncate(urls.toString(), 1000), false)
                 .setTimestamp(event.getMessage().getTimeCreated());
+        if (!links.isEmpty()) embed.addField("Enlace(s)", truncate(linkText.toString(), 1000), false);
         List<FileUpload> mirrorFiles = event.getMessage().getAttachments().stream()
                 .filter(attachment -> attachment.getSize() <= event.getGuild().getMaxFileSize())
                 .limit(10)
