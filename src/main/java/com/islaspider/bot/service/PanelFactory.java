@@ -59,7 +59,7 @@ public final class PanelFactory {
 
                         ¿Necesitas ayuda? Selecciona una categoría en el menú de abajo. Se abrirá un canal privado al que solo tendrás acceso tú y el equipo responsable.
 
-                        **Antes de abrir un ticket:** se te pedirá tu nombre dentro del juego y una explicación de lo sucedido. Adjunta capturas o vídeos si los tienes y evita abrir más de un ticket para el mismo asunto.
+                        **Antes de abrir un ticket:** se te pedirá tu SteamID64 y una explicación de lo sucedido. Puedes pegar el ID de 17 dígitos o el enlace de tu perfil. Adjunta capturas o vídeos si los tienes y evita abrir más de un ticket para el mismo asunto.
 
                         [**🐛**](https://discord.com/assets/cf1083ab7430f27e.svg) **Bug en el juego · Staff**
 

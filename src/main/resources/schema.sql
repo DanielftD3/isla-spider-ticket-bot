@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     opener_id BIGINT NOT NULL,
     type VARCHAR(20) NOT NULL,
     game_name VARCHAR(100) NOT NULL,
+    steam_id VARCHAR(100) NOT NULL,
     subject VARCHAR(150) NOT NULL,
     description TEXT NOT NULL,
     accused_user_id BIGINT,
@@ -17,6 +18,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     close_reason TEXT,
     transcript_path TEXT
 );
+
+-- Migración compatible con instalaciones creadas antes de solicitar SteamID64.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS steam_id VARCHAR(100);
 
 CREATE INDEX IF NOT EXISTS idx_tickets_channel ON tickets(channel_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_opener_status ON tickets(guild_id, opener_id, status);
