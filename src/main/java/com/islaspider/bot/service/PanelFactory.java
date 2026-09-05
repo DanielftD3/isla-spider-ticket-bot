@@ -6,18 +6,18 @@ import net.dv8tion.jda.api.components.actionrow.ActionRow;
 import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.entities.MessageEmbed;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
 
 import java.awt.Color;
 import java.time.Instant;
+import java.util.List;
 
 public final class PanelFactory {
     public static final String CREATE_MENU_ID = "ticket:create";
-    public static final String CLAIM_BUTTON_ID = "ticket:claim";
-    public static final String STRIKE_BUTTON_ID = "ticket:strike";
     public static final String SURVEY_BUTTON_ID = "ticket:survey";
-    public static final String TRANSCRIPT_BUTTON_ID = "ticket:transcript";
-    public static final String CLOSE_BUTTON_ID = "ticket:close";
+    public static final String SURVEY_STAFF_PREFIX = "ticket:survey-staff:";
+    public static final String PANEL_IMAGE_NAME = "isla-spider-panel.jpg";
 
     public static final String SETUP_TICKETS_BUTTON_ID = "setup:publish:tickets";
     public static final String SETUP_MODERATION_BUTTON_ID = "setup:publish:moderation";
@@ -57,9 +57,7 @@ public final class PanelFactory {
                 .setDescription("""
                         [**🎫**](https://discord.com/assets/0668ca7859b5ab1a.svg) **Centro de tickets**
 
-                        ¿Necesitas ayuda? Selecciona una categoría en el menú de abajo. Se abrirá un canal privado al que solo tendrás acceso tú y el equipo responsable.
-
-                        **Antes de abrir un ticket:** se te pedirá tu SteamID64 y una explicación de lo sucedido. Puedes pegar el ID de 17 dígitos o el enlace de tu perfil. Adjunta capturas o vídeos si los tienes y evita abrir más de un ticket para el mismo asunto.
+                        ¿Necesitas ayuda? Selecciona una categoría en el menú de abajo. Se abrirá un canal privado al que solo tendrás acceso tú y el equipo responsable. **Antes de abrir un ticket:** se te pedirá tu nombre dentro del juego y una explicación de lo sucedido. Adjunta capturas o vídeos si los tienes y evita abrir más de un ticket para el mismo asunto.
 
                         [**🐛**](https://discord.com/assets/cf1083ab7430f27e.svg) **Bug en el juego · Staff**
 
@@ -81,9 +79,9 @@ public final class PanelFactory {
 
                         No hagas spam, no menciones repetidamente al equipo y no compartas información personal. Cuando el caso quede resuelto, podrás valorar la atención recibida.
                         """)
+                .setImage("attachment://" + PANEL_IMAGE_NAME)
                 .setFooter("Selecciona una categoría para comenzar")
                 .setTimestamp(Instant.now());
-        if (!config.panelImageUrl().isBlank()) embed.setImage(config.panelImageUrl());
         return embed.build();
     }
 
@@ -98,24 +96,29 @@ public final class PanelFactory {
     }
 
     public ActionRow ticketControls() {
+        return ActionRow.of(Button.primary(SURVEY_BUTTON_ID, "Enviar encuesta")
+                .withEmoji(Emoji.fromUnicode("⭐")));
+    }
+
+    public ActionRow surveyStaffMenu(long ticketId, List<Member> staffMembers) {
+        StringSelectMenu.Builder menu = StringSelectMenu.create(SURVEY_STAFF_PREFIX + ticketId)
+                .setPlaceholder("Administrador que te atendió")
+                .setRequiredRange(1, 1);
+        staffMembers.stream().limit(25).forEach(member -> menu.addOption(
+                member.getEffectiveName(), member.getId(), "@" + member.getUser().getName()));
+        return ActionRow.of(menu.build());
+    }
+
+    public ActionRow feedbackButtons(long ticketId, long staffId) {
         return ActionRow.of(
-                Button.primary(CLAIM_BUTTON_ID, "Reclamar").withEmoji(Emoji.fromUnicode("🙋")),
-                Button.danger(STRIKE_BUTTON_ID, "Añadir warn").withEmoji(Emoji.fromUnicode("⚠️")),
-                Button.success(SURVEY_BUTTON_ID, "Encuesta").withEmoji(Emoji.fromUnicode("⭐")),
-                Button.secondary(TRANSCRIPT_BUTTON_ID, "Transcribir").withEmoji(Emoji.fromUnicode("📄")),
-                Button.danger(CLOSE_BUTTON_ID, "Cerrar").withEmoji(Emoji.fromUnicode("🔒"))
+                rating(ticketId, staffId, 1), rating(ticketId, staffId, 2),
+                rating(ticketId, staffId, 3), rating(ticketId, staffId, 4),
+                rating(ticketId, staffId, 5)
         );
     }
 
-    public ActionRow feedbackButtons(long ticketId) {
-        return ActionRow.of(
-                rating(ticketId, 1), rating(ticketId, 2), rating(ticketId, 3),
-                rating(ticketId, 4), rating(ticketId, 5)
-        );
-    }
-
-    private Button rating(long ticketId, int score) {
-        return Button.secondary("ticket:rating:" + ticketId + ":" + score, score + " ⭐");
+    private Button rating(long ticketId, long staffId, int score) {
+        return Button.secondary("ticket:rating:" + ticketId + ":" + staffId + ":" + score, score + " ⭐");
     }
 
     public MessageEmbed moderationPanel(long activeWarns, long sanctionedUsers) {
