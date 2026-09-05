@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     opener_id BIGINT NOT NULL,
     type VARCHAR(20) NOT NULL,
     game_name VARCHAR(100) NOT NULL,
-    steam_id VARCHAR(100) NOT NULL,
+    steam_id VARCHAR(100),
     subject VARCHAR(150) NOT NULL,
     description TEXT NOT NULL,
     accused_user_id BIGINT,
@@ -19,8 +19,10 @@ CREATE TABLE IF NOT EXISTS tickets (
     transcript_path TEXT
 );
 
--- Migración compatible con instalaciones creadas antes de solicitar SteamID64.
+-- Compatibilidad con la versión anterior: conservamos la columna histórica,
+-- pero deja de ser obligatoria y los tickets nuevos usan game_name.
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS steam_id VARCHAR(100);
+ALTER TABLE tickets ALTER COLUMN steam_id DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_tickets_channel ON tickets(channel_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_opener_status ON tickets(guild_id, opener_id, status);
@@ -82,6 +84,9 @@ CREATE TABLE IF NOT EXISTS ticket_feedback (
     id BIGSERIAL PRIMARY KEY,
     ticket_id BIGINT NOT NULL UNIQUE REFERENCES tickets(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL,
+    attended_by BIGINT,
     rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ticket_feedback ADD COLUMN IF NOT EXISTS attended_by BIGINT;
