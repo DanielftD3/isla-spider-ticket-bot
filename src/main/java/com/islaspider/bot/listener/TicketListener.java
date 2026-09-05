@@ -12,15 +12,16 @@ import com.islaspider.bot.service.TranscriptService;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.components.label.Label;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
 import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
-import net.dv8tion.jda.api.entities.Category;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.UserSnowflake;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
@@ -224,9 +225,9 @@ public final class TicketListener extends ListenerAdapter {
                         .addField("Pruebas", evidence.isBlank() ? "Sin enlaces" : truncate(evidence, 1000), false)
                         .setTimestamp(OffsetDateTime.now())
                         .build())
-                .setActionRow(
+                .setComponents(ActionRow.of(
                         net.dv8tion.jda.api.components.buttons.Button.success("appeal:approve:" + ticketId, "Aprobar"),
-                        net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar"))
+                        net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar")))
                 .queue();
         event.getUser().openPrivateChannel()
                 .flatMap(channel -> channel.sendMessage("⚖️ Recibimos tu apelación **#" + ticketId + "**. Te responderemos por este medio."))
