@@ -6,9 +6,9 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 
 - Panel con menú para `Bug`, `Ayuda`, `Reporte` y `Apelación`.
 - Formularios distintos según el tipo de caso.
-- Identificación mediante SteamID64 en lugar del nombre dentro del juego.
+- Identificación mediante el nombre dentro del juego.
 - Canal privado para el autor, Staff y Moderación.
-- Botones para reclamar, añadir un warn/strike, enviar encuesta, transcribir y cerrar el ticket.
+- Un único botón dentro del ticket: **Enviar encuesta**.
 - Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
 - Log visual de pruebas enviadas.
 - Transcripción HTML al cerrar y copia en el canal de logs.
@@ -106,17 +106,6 @@ Después ejecuta `/setup`. El bot mostrará un asistente privado con dos botones
 
 El canal donde publiques Moderación debe ser visible únicamente para el equipo autorizado.
 
-### Steam ID solicitado en los tickets
-
-El formulario acepta cualquiera de estos formatos y guarda únicamente el SteamID64 normalizado:
-
-```text
-76561198012345678
-https://steamcommunity.com/profiles/76561198012345678/
-```
-
-Los enlaces personalizados `/id/nombre` no contienen el SteamID64 y no se aceptan sin usar la API externa de Steam.
-
 ## 5. Dejarlo funcionando al reiniciar Windows
 
 Abre PowerShell como administrador y ejecuta:
@@ -134,9 +123,9 @@ Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
 | Lugar | Acciones |
 |---|---|
 | Panel de tickets | Bug, ayuda, reporte y apelación |
-| Dentro de un ticket | Reclamar, añadir warn, enviar encuesta, transcribir y cerrar |
+| Dentro de un ticket | Enviar encuesta |
 | Panel de Moderación | Añadir, quitar o revisar warns; advertir sin puntos; mute, kick y ban |
-| Encuesta | Valoración de 1 a 5 estrellas y cierre automático |
+| Encuesta | Selección del administrador, valoración de 1 a 5 estrellas y cierre automático |
 
 Si se añade un warn desde un ticket de reporte, el formulario propone automáticamente el ID del jugador denunciado.
 
