@@ -8,7 +8,7 @@ public record Ticket(
         Long channelId,
         long openerId,
         TicketType type,
-        String steamId,
+        String gameName,
         String subject,
         String description,
         Long accusedUserId,
