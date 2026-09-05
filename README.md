@@ -7,13 +7,14 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 - Panel con menú para `Bug`, `Ayuda`, `Reporte` y `Apelación`.
 - Formularios distintos según el tipo de caso.
 - Canal privado para el autor, Staff y Moderación.
-- Botones para reclamar, agregar un strike y cerrar el ticket.
+- Botones para reclamar, añadir un warn/strike, enviar encuesta, transcribir y cerrar el ticket.
 - Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
 - Log visual de pruebas enviadas.
 - Transcripción HTML al cerrar y copia en el canal de logs.
 - Apelaciones enviadas a un canal privado de administración.
 - Resultado de la apelación por mensaje directo.
-- Comandos `/warn`, `/mute`, `/kick`, `/ban` y `/strike`.
+- Panel de Moderación para añadir, quitar y revisar warns, además de mute, kick y ban.
+- Un único comando: `/setup`; el resto funciona con botones, menús y formularios.
 - Historial de strikes activos y retiro auditable de strikes.
 - Instalación como tarea programada de Windows Server.
 
@@ -21,9 +22,9 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 
 | Acción | Suma puntos | Queda registrada | Puede activar sanción |
 |---|---:|---:|---:|
-| `/warn` | No | Sí | No |
-| `/strike add` | Sí | Sí | Sí, si se habilita |
-| `/strike remove` | Resta el strike activo | Sí, sin borrar el historial | Recalcula el total para el futuro |
+| **Advertir sin puntos** | No | Sí | No |
+| **Añadir Warn** | Sí | Sí | Sí, si se habilita |
+| **Quitar Warn** | Resta el warn activo | Sí, sin borrar el historial | Recalcula el total para el futuro |
 
 Las sanciones automáticas están desactivadas inicialmente con `AUTO_APPLY_STRIKE_SANCTIONS=false`. Cuando la política esté probada, se puede activar. Por defecto, 3 puntos generan mute de 24 horas y 5 puntos generan ban.
 
@@ -97,7 +98,12 @@ Al iniciar, debe aparecer algo similar a:
 Bot conectado como ISLA SPIDER BOT en Isla Spider
 ```
 
-Después ejecuta `/ticket-panel` en el canal donde quieres publicar el panel.
+Después ejecuta `/setup`. El bot mostrará un asistente privado con dos botones:
+
+- **Publicar tickets**: publica el centro de soporte y su menú de categorías.
+- **Publicar moderación**: publica el panel privado de warns y sanciones.
+
+El canal donde publiques Moderación debe ser visible únicamente para el equipo autorizado.
 
 ## 5. Dejarlo funcionando al reiniciar Windows
 
@@ -109,20 +115,18 @@ powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
 
 Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
 
-## Comandos
+## Paneles y botones
 
-| Comando | Uso |
+`/setup` es el único comando y solo puede usarlo un administrador. Todas las operaciones diarias se realizan desde componentes de Discord:
+
+| Lugar | Acciones |
 |---|---|
-| `/ticket-panel` | Publica el menú; requiere administrador |
-| `/warn usuario motivo` | Advertencia sin puntos |
-| `/strike add usuario puntos motivo evidencia ticket` | Agrega puntos y relaciona evidencia/ticket |
-| `/strike list usuario` | Consulta strikes activos y total de puntos |
-| `/strike remove id motivo` | Retira un strike sin borrar la auditoría |
-| `/mute usuario minutos motivo` | Aplica timeout de Discord |
-| `/kick usuario motivo` | Expulsa al miembro |
-| `/ban usuario motivo` | Banea al usuario |
+| Panel de tickets | Bug, ayuda, reporte y apelación |
+| Dentro de un ticket | Reclamar, añadir warn, enviar encuesta, transcribir y cerrar |
+| Panel de Moderación | Añadir, quitar o revisar warns; advertir sin puntos; mute, kick y ban |
+| Encuesta | Valoración de 1 a 5 estrellas y cierre automático |
 
-También se puede agregar un strike desde el botón **Agregar strike** dentro de un ticket. Si es un reporte, el formulario propone automáticamente el ID del jugador denunciado.
+Si se añade un warn desde un ticket de reporte, el formulario propone automáticamente el ID del jugador denunciado.
 
 ## Política sugerida para empezar
 
@@ -156,4 +160,3 @@ src/main/java/com/islaspider/bot/
 - **No puede mutear o banear:** sube el rol del bot por encima del usuario objetivo.
 - **Error de PostgreSQL:** verifica `DB_URL`, usuario, contraseña y que el servicio escuche en `localhost:5432`.
 - **No llegan mensajes privados:** el usuario puede tener bloqueados los DMs del servidor; el caso queda registrado igualmente.
-

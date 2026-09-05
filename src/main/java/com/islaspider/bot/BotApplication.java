@@ -6,7 +6,7 @@ import com.islaspider.bot.db.ModerationRepository;
 import com.islaspider.bot.db.StrikeRepository;
 import com.islaspider.bot.db.TicketRepository;
 import com.islaspider.bot.listener.MessageArchiveListener;
-import com.islaspider.bot.listener.ModerationCommandListener;
+import com.islaspider.bot.listener.ControlPanelListener;
 import com.islaspider.bot.listener.TicketListener;
 import com.islaspider.bot.service.PanelFactory;
 import com.islaspider.bot.service.PermissionService;
@@ -44,7 +44,7 @@ public final class BotApplication {
                     .addEventListeners(
                             new TicketListener(config, tickets, strikes, moderation, permissions, panels, transcripts),
                             new MessageArchiveListener(config, tickets),
-                            new ModerationCommandListener(config, strikes, moderation, permissions, panels))
+                            new ControlPanelListener(config, strikes, moderation, permissions, panels))
                     .build()
                     .awaitReady();
         } catch (RuntimeException | InterruptedException exception) {
@@ -87,4 +87,3 @@ public final class BotApplication {
         }
     }
 }
-

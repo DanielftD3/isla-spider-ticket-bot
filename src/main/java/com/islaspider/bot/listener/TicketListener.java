@@ -12,15 +12,16 @@ import com.islaspider.bot.service.TranscriptService;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.components.label.Label;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
 import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
-import net.dv8tion.jda.api.entities.Category;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.UserSnowflake;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
@@ -44,6 +45,7 @@ public final class TicketListener extends ListenerAdapter {
     private static final String STRIKE_MODAL_PREFIX = "ticket:strike-form:";
     private static final String CLOSE_MODAL_PREFIX = "ticket:close-form:";
     private static final String APPEAL_DECISION_PREFIX = "appeal:decision-form:";
+    private static final String RATING_BUTTON_PREFIX = "ticket:rating:";
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
 
     private final BotConfig config;
@@ -99,8 +101,14 @@ public final class TicketListener extends ListenerAdapter {
                 claimTicket(event);
             } else if (PanelFactory.STRIKE_BUTTON_ID.equals(id)) {
                 openStrikeModal(event);
+            } else if (PanelFactory.SURVEY_BUTTON_ID.equals(id)) {
+                sendSurvey(event);
+            } else if (PanelFactory.TRANSCRIPT_BUTTON_ID.equals(id)) {
+                sendTranscriptPreview(event);
             } else if (PanelFactory.CLOSE_BUTTON_ID.equals(id)) {
                 openCloseModal(event);
+            } else if (id.startsWith(RATING_BUTTON_PREFIX)) {
+                submitRating(event);
             } else if (id.startsWith("appeal:approve:") || id.startsWith("appeal:reject:")) {
                 openAppealDecisionModal(event);
             }
@@ -185,7 +193,8 @@ public final class TicketListener extends ListenerAdapter {
                         type, gameName, subject, description, finalAccusedId, evidence);
                 saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
                 channel.sendMessage(event.getUser().getAsMention() + " <@&" + config.staffRoleId() + ">")
-                        .setEmbeds(ticketCreatedEmbed(ticketId, type, gameName, subject, description, finalAccusedId, evidence))
+                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
+                                description, finalAccusedId, evidence))
                         .setComponents(panels.ticketControls())
                         .queue();
                 event.getHook().editOriginal("✅ Ticket creado: " + channel.getAsMention()).queue();
@@ -216,9 +225,9 @@ public final class TicketListener extends ListenerAdapter {
                         .addField("Pruebas", evidence.isBlank() ? "Sin enlaces" : truncate(evidence, 1000), false)
                         .setTimestamp(OffsetDateTime.now())
                         .build())
-                .setActionRow(
+                .setComponents(ActionRow.of(
                         net.dv8tion.jda.api.components.buttons.Button.success("appeal:approve:" + ticketId, "Aprobar"),
-                        net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar"))
+                        net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar")))
                 .queue();
         event.getUser().openPrivateChannel()
                 .flatMap(channel -> channel.sendMessage("⚖️ Recibimos tu apelación **#" + ticketId + "**. Te responderemos por este medio."))
@@ -242,14 +251,14 @@ public final class TicketListener extends ListenerAdapter {
 
     private void openStrikeModal(ButtonInteractionEvent event) {
         if (!permissions.isModerator(event.getMember())) {
-            event.reply("❌ Solo Moderación puede agregar strikes.").setEphemeral(true).queue();
+            event.reply("❌ Solo Moderación puede añadir warns.").setEphemeral(true).queue();
             return;
         }
         Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
         TextInput.Builder target = TextInput.create("target-id", TextInputStyle.SHORT)
                 .setPlaceholder("ID de Discord del sancionado").setRequiredRange(15, 25);
         if (ticket.accusedUserId() != null) target.setValue(String.valueOf(ticket.accusedUserId()));
-        Modal modal = Modal.create(STRIKE_MODAL_PREFIX + ticket.id(), "Agregar strike")
+        Modal modal = Modal.create(STRIKE_MODAL_PREFIX + ticket.id(), "Añadir warn / strike")
                 .addComponents(
                         Label.of("Usuario sancionado", target.build()),
                         label("Cantidad de puntos", "points", TextInputStyle.SHORT, "Normalmente 1", 1, 2, true),
@@ -257,6 +266,71 @@ public final class TicketListener extends ListenerAdapter {
                         label("Enlace de evidencia", "strike-evidence", TextInputStyle.PARAGRAPH, "Opcional", 0, 1000, false))
                 .build();
         event.replyModal(modal).queue();
+    }
+
+    private void sendSurvey(ButtonInteractionEvent event) {
+        if (!permissions.isStaff(event.getMember())) {
+            event.reply("❌ Solo el equipo puede enviar la encuesta.").setEphemeral(true).queue();
+            return;
+        }
+        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
+            return;
+        }
+        event.reply("⭐ <@" + ticket.openerId() + ">, valora la atención recibida. "
+                        + "Al elegir una puntuación se guardará la encuesta y se cerrará el ticket.")
+                .setComponents(panels.feedbackButtons(ticket.id()))
+                .queue();
+    }
+
+    private void sendTranscriptPreview(ButtonInteractionEvent event) {
+        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        boolean allowed = permissions.isStaff(event.getMember()) || ticket.openerId() == event.getUser().getIdLong();
+        if (!allowed) {
+            event.reply("❌ No puedes generar esta transcripción.").setEphemeral(true).queue();
+            return;
+        }
+        event.deferReply(true).queue();
+        Path transcript = transcripts.generate(ticket);
+        event.getHook().sendMessage("📄 Transcripción actual del ticket #" + ticket.id())
+                .addFiles(FileUpload.fromData(transcript.toFile()))
+                .queue();
+    }
+
+    private void submitRating(ButtonInteractionEvent event) {
+        String[] parts = event.getComponentId().split(":");
+        if (parts.length != 4) throw new IllegalArgumentException("Encuesta no válida");
+        long ticketId = Long.parseLong(parts[2]);
+        int rating = Integer.parseInt(parts[3]);
+        if (rating < 1 || rating > 5) throw new IllegalArgumentException("Valoración no válida");
+        Ticket ticket = tickets.findById(ticketId)
+                .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
+        if (ticket.openerId() != event.getUser().getIdLong()) {
+            event.reply("❌ Solo quien abrió el ticket puede responder la encuesta.").setEphemeral(true).queue();
+            return;
+        }
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
+            return;
+        }
+        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), rating)) {
+            event.reply("⚠️ Esta encuesta ya fue respondida.").setEphemeral(true).queue();
+            return;
+        }
+
+        event.deferReply(true).queue();
+        String reason = "Cierre automático después de una valoración de " + rating + "/5";
+        Path transcript = transcripts.generate(ticket);
+        tickets.close(ticket.id(), event.getUser().getIdLong(), reason, transcript.toString());
+        sendClosedTicketLog(event.getGuild(), ticket, event.getUser().getAsMention(), reason, transcript, rating);
+        event.getHook().editOriginal("✅ Gracias por tu valoración de **" + rating
+                + "/5**. El ticket se cerrará automáticamente.").queue();
+        if (event.getChannel() instanceof TextChannel channel) {
+            channel.sendMessage("⭐ Encuesta completada por <@" + ticket.openerId() + ">: **"
+                    + rating + "/5**. Cerrando ticket…").queue();
+            if (config.deleteTicketChannelOnClose()) channel.delete().queueAfter(5, TimeUnit.SECONDS);
+        }
     }
 
     private void addStrikeFromTicket(ModalInteractionEvent event, long ticketId) {
@@ -274,7 +348,7 @@ public final class TicketListener extends ListenerAdapter {
         moderation.log(ticket.guildId(), targetId, event.getUser().getIdLong(), "STRIKE", reason, null, ticket.id());
         notifyStrike(event, targetId, strikeId, points, total, reason);
         applyConfiguredThreshold(event.getGuild(), targetId, total, reason, ticket.id(), event.getUser().getIdLong());
-        event.reply("⚠️ Strike **#" + strikeId + "** agregado a <@" + targetId + ">. Total activo: **" + total + " puntos**.").queue();
+        event.reply("⚠️ Warn **#" + strikeId + "** añadido a <@" + targetId + ">. Total activo: **" + total + " puntos**.").queue();
     }
 
     private void openCloseModal(ButtonInteractionEvent event) {
@@ -303,24 +377,31 @@ public final class TicketListener extends ListenerAdapter {
         String reason = value(event, "close-reason");
         tickets.close(ticket.id(), event.getUser().getIdLong(), reason, transcript.toString());
 
-        TextChannel log = event.getGuild().getTextChannelById(config.ticketLogChannelId());
-        if (log != null) {
-            log.sendMessageEmbeds(new EmbedBuilder()
-                            .setColor(Color.RED)
-                            .setTitle("🔒 Ticket cerrado #" + ticket.id())
-                            .addField("Tipo", ticket.type().label(), true)
-                            .addField("Creado por", "<@" + ticket.openerId() + ">", true)
-                            .addField("Cerrado por", event.getUser().getAsMention(), true)
-                            .addField("Motivo", truncate(reason, 1000), false)
-                            .setTimestamp(OffsetDateTime.now()).build())
-                    .addFiles(FileUpload.fromData(transcript.toFile()))
-                    .queue();
-        }
+        sendClosedTicketLog(event.getGuild(), ticket, event.getUser().getAsMention(), reason, transcript, null);
         event.getHook().editOriginal("✅ Ticket cerrado. La transcripción fue generada.").queue();
         if (event.getChannel() instanceof TextChannel channel) {
             channel.sendMessage("🔒 Ticket cerrado por " + event.getUser().getAsMention() + ". Motivo: " + reason).queue();
             if (config.deleteTicketChannelOnClose()) channel.delete().queueAfter(5, TimeUnit.SECONDS);
         }
+    }
+
+    private void sendClosedTicketLog(Guild guild, Ticket ticket, String closerMention, String reason,
+                                     Path transcript, Integer rating) {
+        if (guild == null) return;
+        TextChannel log = guild.getTextChannelById(config.ticketLogChannelId());
+        if (log == null) return;
+        EmbedBuilder embed = new EmbedBuilder()
+                .setColor(Color.RED)
+                .setTitle("🔒 Ticket cerrado #" + ticket.id())
+                .addField("Tipo", ticket.type().label(), true)
+                .addField("Creado por", "<@" + ticket.openerId() + ">", true)
+                .addField("Cerrado por", closerMention, true)
+                .addField("Motivo", truncate(reason, 1000), false)
+                .setTimestamp(OffsetDateTime.now());
+        if (rating != null) embed.addField("Valoración", rating + "/5 ⭐", true);
+        log.sendMessageEmbeds(embed.build())
+                .addFiles(FileUpload.fromData(transcript.toFile()))
+                .queue();
     }
 
     private void openAppealDecisionModal(ButtonInteractionEvent event) {
@@ -363,8 +444,8 @@ public final class TicketListener extends ListenerAdapter {
 
     private void notifyStrike(ModalInteractionEvent event, long targetId, long strikeId, int points, int total, String reason) {
         event.getJDA().retrieveUserById(targetId).queue(user -> user.openPrivateChannel()
-                .flatMap(channel -> channel.sendMessage("⚠️ Has recibido un strike en **" + event.getGuild().getName() + "**.\n"
-                        + "**Strike:** #" + strikeId + " (" + points + " punto(s))\n"
+                .flatMap(channel -> channel.sendMessage("⚠️ Has recibido un warn en **" + event.getGuild().getName() + "**.\n"
+                        + "**Warn:** #" + strikeId + " (" + points + " punto(s))\n"
                         + "**Total activo:** " + total + "\n**Motivo:** " + reason
                         + "\nSi consideras que es un error, usa el panel de apelaciones."))
                 .queue(null, ignored -> {}), ignored -> {});
@@ -375,12 +456,12 @@ public final class TicketListener extends ListenerAdapter {
         if (!config.autoApplyStrikeSanctions() || guild == null) return;
         if (total >= config.strikeBanThreshold()) {
             guild.ban(UserSnowflake.fromId(targetId), 0, TimeUnit.SECONDS)
-                    .reason("Umbral de strikes: " + reason)
+                    .reason("Umbral de warns: " + reason)
                     .queue(success -> moderation.log(guild.getIdLong(), targetId, moderatorId, "AUTO_BAN", reason, null, ticketId),
                             ignored -> {});
         } else if (total >= config.strikeMuteThreshold()) {
             guild.retrieveMemberById(targetId).queue(member -> member.timeoutFor(Duration.ofHours(config.strikeMuteHours()))
-                    .reason("Umbral de strikes: " + reason)
+                    .reason("Umbral de warns: " + reason)
                     .queue(success -> moderation.log(guild.getIdLong(), targetId, moderatorId, "AUTO_MUTE", reason,
                             Duration.ofHours(config.strikeMuteHours()).toSeconds(), ticketId), ignored -> {}), ignored -> {});
         }
@@ -438,17 +519,31 @@ public final class TicketListener extends ListenerAdapter {
         return type.channelPrefix() + "-" + safe + "-" + user.getId().substring(Math.max(0, user.getId().length() - 4));
     }
 
-    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, String gameName,
+    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String gameName,
                                                                           String subject, String description,
                                                                           Long accusedId, String evidence) {
-        EmbedBuilder embed = new EmbedBuilder().setColor(new Color(230, 30, 40))
-                .setTitle("🎟️ Ticket #" + id + " · " + type.label())
-                .addField("Nombre en juego", gameName, true)
-                .addField("Asunto", subject, true)
-                .addField("Descripción", truncate(description, 1000), false);
+        String emoji = switch (type) {
+            case BUG -> "🐛";
+            case HELP -> "❓";
+            case REPORT -> "🚨";
+            case APPEAL -> "⚖️";
+        };
+        long responsibleRole = type == TicketType.REPORT ? config.moderatorRoleId() : config.staffRoleId();
+        EmbedBuilder embed = new EmbedBuilder().setColor(new Color(30, 190, 120))
+                .setTitle(emoji + " Ticket: " + type.label())
+                .setDescription("Tu solicitud ha sido recibida. Describe el caso con el mayor detalle posible para que podamos ayudarte más rápido.")
+                .addField("👤 Creador", creator.getAsMention(), true)
+                .addField("🎮 Nombre en el juego", gameName, true)
+                .addField("🛡️ Equipo responsable", "<@&" + responsibleRole + ">", true)
+                .addField("📝 Qué ha sucedido", "**" + truncate(subject, 140) + "**\n" + truncate(description, 850), false);
         if (accusedId != null) embed.addField("Jugador reportado", "<@" + accusedId + "> (`" + accusedId + "`)", false);
         if (!evidence.isBlank()) embed.addField("Pruebas iniciales", truncate(evidence, 1000), false);
-        return embed.setFooter("Sube las capturas o videos directamente en este canal").setTimestamp(OffsetDateTime.now()).build();
+        return embed
+                .addField("📌 Qué incluir", "**Explicación detallada, pruebas, capturas y cualquier dato relevante.** "
+                        + "Las pruebas deben ser grabadas con Medal o cualquier otra aplicación de grabación.", false)
+                .addField("⭐ Al finalizar", "El equipo puede enviarte una encuesta. Si la completas, el ticket se cerrará automáticamente.", false)
+                .setFooter("Ticket #" + id + " · No menciones al equipo repetidamente; te atenderán lo antes posible.")
+                .setTimestamp(OffsetDateTime.now()).build();
     }
 
     private void replyError(ModalInteractionEvent event, RuntimeException exception) {
@@ -471,4 +566,3 @@ public final class TicketListener extends ListenerAdapter {
         return url.replaceAll("[),.;]+$", "");
     }
 }
-

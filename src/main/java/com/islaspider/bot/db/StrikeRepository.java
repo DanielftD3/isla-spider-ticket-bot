@@ -1,6 +1,7 @@
 package com.islaspider.bot.db;
 
 import com.islaspider.bot.model.Strike;
+import com.islaspider.bot.model.SanctionedUser;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -94,8 +95,54 @@ public final class StrikeRepository {
         }
     }
 
+    public long countActive(long guildId) {
+        return count("SELECT COUNT(*) FROM strikes WHERE guild_id=? AND active=true", guildId);
+    }
+
+    public long countSanctionedUsers(long guildId) {
+        return count("SELECT COUNT(DISTINCT user_id) FROM strikes WHERE guild_id=? AND active=true", guildId);
+    }
+
+    public List<SanctionedUser> listSanctionedUsers(long guildId, int limit) {
+        String sql = """
+                SELECT user_id, COUNT(*) AS warn_count, COALESCE(SUM(points), 0) AS points
+                  FROM strikes
+                 WHERE guild_id=? AND active=true
+                 GROUP BY user_id
+                 ORDER BY points DESC, warn_count DESC
+                 LIMIT ?
+                """;
+        List<SanctionedUser> users = new ArrayList<>();
+        try (Connection connection = database.connection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, guildId);
+            statement.setInt(2, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    users.add(new SanctionedUser(result.getLong("user_id"),
+                            result.getInt("warn_count"), result.getInt("points")));
+                }
+            }
+            return users;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudieron consultar los usuarios sancionados", exception);
+        }
+    }
+
+    private long count(String sql, long guildId) {
+        try (Connection connection = database.connection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, guildId);
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getLong(1);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudieron calcular las estadísticas de warns", exception);
+        }
+    }
+
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
     }
 }
-

@@ -129,6 +129,23 @@ public final class TicketRepository {
         }
     }
 
+    public boolean saveFeedback(long ticketId, long userId, int rating) {
+        String sql = """
+                INSERT INTO ticket_feedback(ticket_id, user_id, rating)
+                VALUES (?, ?, ?)
+                ON CONFLICT (ticket_id) DO NOTHING
+                """;
+        try (Connection connection = database.connection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, ticketId);
+            statement.setLong(2, userId);
+            statement.setInt(3, rating);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudo guardar la valoración", exception);
+        }
+    }
+
     public void saveMessage(long ticketId, long messageId, long authorId, String authorName,
                             String content, OffsetDateTime createdAt) {
         String sql = """
@@ -225,4 +242,3 @@ public final class TicketRepository {
         return value == null || value.isBlank() ? null : value;
     }
 }
-
