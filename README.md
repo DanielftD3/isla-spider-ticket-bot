@@ -6,6 +6,7 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 
 - Panel con menú para `Bug`, `Ayuda`, `Reporte` y `Apelación`.
 - Formularios distintos según el tipo de caso.
+- Identificación mediante SteamID64 en lugar del nombre dentro del juego.
 - Canal privado para el autor, Staff y Moderación.
 - Botones para reclamar, añadir un warn/strike, enviar encuesta, transcribir y cerrar el ticket.
 - Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
@@ -104,6 +105,17 @@ Después ejecuta `/setup`. El bot mostrará un asistente privado con dos botones
 - **Publicar moderación**: publica el panel privado de warns y sanciones.
 
 El canal donde publiques Moderación debe ser visible únicamente para el equipo autorizado.
+
+### Steam ID solicitado en los tickets
+
+El formulario acepta cualquiera de estos formatos y guarda únicamente el SteamID64 normalizado:
+
+```text
+76561198012345678
+https://steamcommunity.com/profiles/76561198012345678/
+```
+
+Los enlaces personalizados `/id/nombre` no contienen el SteamID64 y no se aceptan sin usar la API externa de Steam.
 
 ## 5. Dejarlo funcionando al reiniciar Windows
 

@@ -22,12 +22,12 @@ public final class TicketRepository {
         this.database = database;
     }
 
-    public long create(long guildId, Long channelId, long openerId, TicketType type, String gameName,
+    public long create(long guildId, Long channelId, long openerId, TicketType type, String steamId,
                        String subject, String description, Long accusedUserId, String evidence) {
         String sql = """
                 INSERT INTO tickets
-                    (guild_id, channel_id, opener_id, type, game_name, subject, description, accused_user_id, evidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (guild_id, channel_id, opener_id, type, game_name, steam_id, subject, description, accused_user_id, evidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (Connection connection = database.connection();
              PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -35,11 +35,12 @@ public final class TicketRepository {
             if (channelId == null) statement.setNull(2, java.sql.Types.BIGINT); else statement.setLong(2, channelId);
             statement.setLong(3, openerId);
             statement.setString(4, type.name());
-            statement.setString(5, gameName);
-            statement.setString(6, subject);
-            statement.setString(7, description);
-            if (accusedUserId == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, accusedUserId);
-            statement.setString(9, blankToNull(evidence));
+            statement.setString(5, steamId); // Columna heredada, conservada para instalaciones existentes.
+            statement.setString(6, steamId);
+            statement.setString(7, subject);
+            statement.setString(8, description);
+            if (accusedUserId == null) statement.setNull(9, java.sql.Types.BIGINT); else statement.setLong(9, accusedUserId);
+            statement.setString(10, blankToNull(evidence));
             statement.executeUpdate();
             try (ResultSet keys = statement.getGeneratedKeys()) {
                 if (keys.next()) return keys.getLong(1);
@@ -229,10 +230,12 @@ public final class TicketRepository {
     }
 
     private Ticket map(ResultSet result) throws SQLException {
+        String steamId = result.getString("steam_id");
+        if (steamId == null || steamId.isBlank()) steamId = result.getString("game_name");
         return new Ticket(
                 result.getLong("id"), result.getLong("guild_id"), result.getObject("channel_id", Long.class),
                 result.getLong("opener_id"), TicketType.valueOf(result.getString("type")),
-                result.getString("game_name"), result.getString("subject"), result.getString("description"),
+                steamId, result.getString("subject"), result.getString("description"),
                 result.getObject("accused_user_id", Long.class), result.getString("evidence"),
                 result.getString("status"), result.getObject("claimed_by", Long.class),
                 result.getObject("created_at", OffsetDateTime.class));

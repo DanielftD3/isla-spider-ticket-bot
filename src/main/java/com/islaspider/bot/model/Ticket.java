@@ -8,7 +8,7 @@ public record Ticket(
         Long channelId,
         long openerId,
         TicketType type,
-        String gameName,
+        String steamId,
         String subject,
         String description,
         Long accusedUserId,
@@ -17,4 +17,3 @@ public record Ticket(
         Long claimedBy,
         OffsetDateTime createdAt
 ) {}
-

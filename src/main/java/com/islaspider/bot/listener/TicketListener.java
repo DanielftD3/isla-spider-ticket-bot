@@ -9,6 +9,7 @@ import com.islaspider.bot.model.TicketType;
 import com.islaspider.bot.service.PanelFactory;
 import com.islaspider.bot.service.PermissionService;
 import com.islaspider.bot.service.TranscriptService;
+import com.islaspider.bot.util.SteamId;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.components.label.Label;
@@ -120,8 +121,8 @@ public final class TicketListener extends ListenerAdapter {
     private Modal buildTicketModal(TicketType type) {
         Modal.Builder modal = Modal.create(TICKET_MODAL_PREFIX + type.code(), type.label())
                 .addComponents(
-                        label("Nombre dentro del juego", "game-name", TextInputStyle.SHORT,
-                                "Tu nombre exacto en el juego", 2, 100, true),
+                        label("Steam ID", "steam-id", TextInputStyle.SHORT,
+                                "SteamID64 o enlace steamcommunity.com/profiles/...", 17, 100, true),
                         label("Asunto", "subject", TextInputStyle.SHORT,
                                 type == TicketType.APPEAL ? "¿Qué sanción deseas apelar?" : "Resumen del caso", 5, 150, true),
                         label("Explicación detallada", "description", TextInputStyle.PARAGRAPH,
@@ -148,7 +149,7 @@ public final class TicketListener extends ListenerAdapter {
 
     private void createTicket(ModalInteractionEvent event, TicketType type) {
         Guild guild = requireGuild(event.getGuild());
-        String gameName = value(event, "game-name");
+        String steamId = SteamId.normalize(value(event, "steam-id"));
         String subject = value(event, "subject");
         String description = value(event, "description");
         String evidence = optionalValue(event, "evidence");
@@ -160,7 +161,7 @@ public final class TicketListener extends ListenerAdapter {
         }
         event.deferReply(true).queue();
         if (type == TicketType.APPEAL) {
-            createAppeal(event, guild, gameName, subject, description, evidence);
+            createAppeal(event, guild, steamId, subject, description, evidence);
             return;
         }
 
@@ -190,10 +191,10 @@ public final class TicketListener extends ListenerAdapter {
         action.queue(channel -> {
             try {
                 long ticketId = tickets.create(guild.getIdLong(), channel.getIdLong(), event.getUser().getIdLong(),
-                        type, gameName, subject, description, finalAccusedId, evidence);
+                        type, steamId, subject, description, finalAccusedId, evidence);
                 saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
                 channel.sendMessage(event.getUser().getAsMention() + " <@&" + config.staffRoleId() + ">")
-                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
+                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), steamId, subject,
                                 description, finalAccusedId, evidence))
                         .setComponents(panels.ticketControls())
                         .queue();
@@ -205,10 +206,10 @@ public final class TicketListener extends ListenerAdapter {
         }, error -> event.getHook().editOriginal("❌ Discord no permitió crear el canal: " + error.getMessage()).queue());
     }
 
-    private void createAppeal(ModalInteractionEvent event, Guild guild, String gameName, String subject,
+    private void createAppeal(ModalInteractionEvent event, Guild guild, String steamId, String subject,
                               String description, String evidence) {
         long ticketId = tickets.create(guild.getIdLong(), null, event.getUser().getIdLong(), TicketType.APPEAL,
-                gameName, subject, description, null, evidence);
+                steamId, subject, description, null, evidence);
         saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
         TextChannel log = guild.getTextChannelById(config.appealLogChannelId());
         if (log == null) {
@@ -219,7 +220,7 @@ public final class TicketListener extends ListenerAdapter {
                         .setColor(new Color(245, 166, 35))
                         .setTitle("⚖️ Nueva apelación #" + ticketId)
                         .addField("Usuario", event.getUser().getAsMention() + " (`" + event.getUser().getId() + "`)", false)
-                        .addField("Nombre en juego", gameName, true)
+                        .addField("SteamID64", "`" + steamId + "`", true)
                         .addField("Sanción", subject, true)
                         .addField("Explicación", truncate(description, 1000), false)
                         .addField("Pruebas", evidence.isBlank() ? "Sin enlaces" : truncate(evidence, 1000), false)
@@ -519,7 +520,7 @@ public final class TicketListener extends ListenerAdapter {
         return type.channelPrefix() + "-" + safe + "-" + user.getId().substring(Math.max(0, user.getId().length() - 4));
     }
 
-    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String gameName,
+    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String steamId,
                                                                           String subject, String description,
                                                                           Long accusedId, String evidence) {
         String emoji = switch (type) {
@@ -533,7 +534,7 @@ public final class TicketListener extends ListenerAdapter {
                 .setTitle(emoji + " Ticket: " + type.label())
                 .setDescription("Tu solicitud ha sido recibida. Describe el caso con el mayor detalle posible para que podamos ayudarte más rápido.")
                 .addField("👤 Creador", creator.getAsMention(), true)
-                .addField("🎮 Nombre en el juego", gameName, true)
+                .addField("🎮 SteamID64", "`" + steamId + "`", true)
                 .addField("🛡️ Equipo responsable", "<@&" + responsibleRole + ">", true)
                 .addField("📝 Qué ha sucedido", "**" + truncate(subject, 140) + "**\n" + truncate(description, 850), false);
         if (accusedId != null) embed.addField("Jugador reportado", "<@" + accusedId + "> (`" + accusedId + "`)", false);

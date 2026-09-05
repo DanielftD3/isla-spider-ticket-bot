@@ -56,9 +56,10 @@ public final class TranscriptService {
                 h1{color:#fff}.summary b{color:#fff}.message header{display:flex;gap:12px;align-items:baseline}.message header span{color:#949ba4;font-size:12px}
                 .message p{white-space:normal;line-height:1.45}.attachment{display:block;color:#00a8fc;margin:7px 0;word-break:break-all}
                 </style></head><body><main><h1>Transcripción del ticket #%d</h1>
-                <section class="summary"><p><b>Tipo:</b> %s</p><p><b>Usuario:</b> %s (%d)</p>
+                <section class="summary"><p><b>Tipo:</b> %s</p><p><b>SteamID64:</b> %s</p>
+                <p><b>Usuario de Discord:</b> %d</p>
                 <p><b>Asunto:</b> %s</p><p><b>Descripción:</b> %s</p></section>%s</main></body></html>
-                """.formatted(ticket.id(), ticket.id(), escape(ticket.type().label()), escape(ticket.gameName()),
+                """.formatted(ticket.id(), ticket.id(), escape(ticket.type().label()), escape(ticket.steamId()),
                 ticket.openerId(), escape(ticket.subject()), withBreaks(ticket.description()), body);
 
         try {
@@ -84,4 +85,3 @@ public final class TranscriptService {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }
-
