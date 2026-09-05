@@ -9,7 +9,6 @@ import com.islaspider.bot.model.TicketType;
 import com.islaspider.bot.service.PanelFactory;
 import com.islaspider.bot.service.PermissionService;
 import com.islaspider.bot.service.TranscriptService;
-import com.islaspider.bot.util.SteamId;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.components.label.Label;
@@ -35,7 +34,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.EnumSet;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -71,9 +72,17 @@ public final class TicketListener extends ListenerAdapter {
 
     @Override
     public void onStringSelectInteraction(StringSelectInteractionEvent event) {
-        if (!PanelFactory.CREATE_MENU_ID.equals(event.getComponentId()) || event.getValues().isEmpty()) return;
-        TicketType type = TicketType.fromCode(event.getValues().getFirst());
-        event.replyModal(buildTicketModal(type)).queue();
+        if (event.getValues().isEmpty()) return;
+        try {
+            if (PanelFactory.CREATE_MENU_ID.equals(event.getComponentId())) {
+                TicketType type = TicketType.fromCode(event.getValues().getFirst());
+                event.replyModal(buildTicketModal(type)).queue();
+            } else if (event.getComponentId().startsWith(PanelFactory.SURVEY_STAFF_PREFIX)) {
+                selectSurveyStaff(event);
+            }
+        } catch (RuntimeException exception) {
+            if (!event.isAcknowledged()) event.reply("❌ " + safeMessage(exception)).setEphemeral(true).queue();
+        }
     }
 
     @Override
@@ -98,16 +107,8 @@ public final class TicketListener extends ListenerAdapter {
     public void onButtonInteraction(ButtonInteractionEvent event) {
         try {
             String id = event.getComponentId();
-            if (PanelFactory.CLAIM_BUTTON_ID.equals(id)) {
-                claimTicket(event);
-            } else if (PanelFactory.STRIKE_BUTTON_ID.equals(id)) {
-                openStrikeModal(event);
-            } else if (PanelFactory.SURVEY_BUTTON_ID.equals(id)) {
+            if (PanelFactory.SURVEY_BUTTON_ID.equals(id)) {
                 sendSurvey(event);
-            } else if (PanelFactory.TRANSCRIPT_BUTTON_ID.equals(id)) {
-                sendTranscriptPreview(event);
-            } else if (PanelFactory.CLOSE_BUTTON_ID.equals(id)) {
-                openCloseModal(event);
             } else if (id.startsWith(RATING_BUTTON_PREFIX)) {
                 submitRating(event);
             } else if (id.startsWith("appeal:approve:") || id.startsWith("appeal:reject:")) {
@@ -121,8 +122,8 @@ public final class TicketListener extends ListenerAdapter {
     private Modal buildTicketModal(TicketType type) {
         Modal.Builder modal = Modal.create(TICKET_MODAL_PREFIX + type.code(), type.label())
                 .addComponents(
-                        label("Steam ID", "steam-id", TextInputStyle.SHORT,
-                                "SteamID64 o enlace steamcommunity.com/profiles/...", 17, 100, true),
+                        label("Nombre dentro del juego", "game-name", TextInputStyle.SHORT,
+                                "Escribe tu nombre dentro del juego", 2, 100, true),
                         label("Asunto", "subject", TextInputStyle.SHORT,
                                 type == TicketType.APPEAL ? "¿Qué sanción deseas apelar?" : "Resumen del caso", 5, 150, true),
                         label("Explicación detallada", "description", TextInputStyle.PARAGRAPH,
@@ -149,7 +150,7 @@ public final class TicketListener extends ListenerAdapter {
 
     private void createTicket(ModalInteractionEvent event, TicketType type) {
         Guild guild = requireGuild(event.getGuild());
-        String steamId = SteamId.normalize(value(event, "steam-id"));
+        String gameName = value(event, "game-name");
         String subject = value(event, "subject");
         String description = value(event, "description");
         String evidence = optionalValue(event, "evidence");
@@ -161,7 +162,7 @@ public final class TicketListener extends ListenerAdapter {
         }
         event.deferReply(true).queue();
         if (type == TicketType.APPEAL) {
-            createAppeal(event, guild, steamId, subject, description, evidence);
+            createAppeal(event, guild, gameName, subject, description, evidence);
             return;
         }
 
@@ -191,10 +192,10 @@ public final class TicketListener extends ListenerAdapter {
         action.queue(channel -> {
             try {
                 long ticketId = tickets.create(guild.getIdLong(), channel.getIdLong(), event.getUser().getIdLong(),
-                        type, steamId, subject, description, finalAccusedId, evidence);
+                        type, gameName, subject, description, finalAccusedId, evidence);
                 saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
                 channel.sendMessage(event.getUser().getAsMention() + " <@&" + config.staffRoleId() + ">")
-                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), steamId, subject,
+                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
                                 description, finalAccusedId, evidence))
                         .setComponents(panels.ticketControls())
                         .queue();
@@ -206,10 +207,10 @@ public final class TicketListener extends ListenerAdapter {
         }, error -> event.getHook().editOriginal("❌ Discord no permitió crear el canal: " + error.getMessage()).queue());
     }
 
-    private void createAppeal(ModalInteractionEvent event, Guild guild, String steamId, String subject,
+    private void createAppeal(ModalInteractionEvent event, Guild guild, String gameName, String subject,
                               String description, String evidence) {
         long ticketId = tickets.create(guild.getIdLong(), null, event.getUser().getIdLong(), TicketType.APPEAL,
-                steamId, subject, description, null, evidence);
+                gameName, subject, description, null, evidence);
         saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
         TextChannel log = guild.getTextChannelById(config.appealLogChannelId());
         if (log == null) {
@@ -220,7 +221,7 @@ public final class TicketListener extends ListenerAdapter {
                         .setColor(new Color(245, 166, 35))
                         .setTitle("⚖️ Nueva apelación #" + ticketId)
                         .addField("Usuario", event.getUser().getAsMention() + " (`" + event.getUser().getId() + "`)", false)
-                        .addField("SteamID64", "`" + steamId + "`", true)
+                        .addField("Nombre en el juego", gameName, true)
                         .addField("Sanción", subject, true)
                         .addField("Explicación", truncate(description, 1000), false)
                         .addField("Pruebas", evidence.isBlank() ? "Sin enlaces" : truncate(evidence, 1000), false)
@@ -279,9 +280,53 @@ public final class TicketListener extends ListenerAdapter {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
         }
-        event.reply("⭐ <@" + ticket.openerId() + ">, valora la atención recibida. "
-                        + "Al elegir una puntuación se guardará la encuesta y se cerrará el ticket.")
-                .setComponents(panels.feedbackButtons(ticket.id()))
+        Guild guild = requireGuild(event.getGuild());
+        Role staffRole = guild.getRoleById(config.staffRoleId());
+        Role moderatorRole = guild.getRoleById(config.moderatorRoleId());
+        if (staffRole == null || moderatorRole == null) {
+            throw new IllegalStateException("Los roles del equipo no están configurados correctamente");
+        }
+        Set<Member> uniqueMembers = new LinkedHashSet<>();
+        uniqueMembers.addAll(guild.getMembersWithRoles(staffRole));
+        uniqueMembers.addAll(guild.getMembersWithRoles(moderatorRole));
+        List<Member> staffMembers = uniqueMembers.stream()
+                .filter(member -> !member.getUser().isBot())
+                .sorted(Comparator.comparing(Member::getEffectiveName, String.CASE_INSENSITIVE_ORDER))
+                .limit(25)
+                .toList();
+        if (staffMembers.isEmpty()) {
+            throw new IllegalStateException("No hay administradores disponibles para la encuesta");
+        }
+        event.reply("⭐ <@" + ticket.openerId() + ">, selecciona el administrador que te atendió para valorar el servicio. "
+                        + "Al enviar la valoración, el ticket se cerrará automáticamente.")
+                .setComponents(panels.surveyStaffMenu(ticket.id(), staffMembers))
+                .queue();
+    }
+
+    private void selectSurveyStaff(StringSelectInteractionEvent event) {
+        long ticketId = Long.parseLong(event.getComponentId().substring(PanelFactory.SURVEY_STAFF_PREFIX.length()));
+        long staffId = Long.parseUnsignedLong(event.getValues().getFirst());
+        Ticket ticket = tickets.findById(ticketId)
+                .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
+        if (ticket.openerId() != event.getUser().getIdLong()) {
+            event.reply("❌ Solo quien abrió el ticket puede seleccionar al administrador.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
+            return;
+        }
+        Guild guild = requireGuild(event.getGuild());
+        Member selectedStaff = guild.getMemberById(staffId);
+        if (selectedStaff == null || !permissions.isStaff(selectedStaff)) {
+            event.reply("❌ El administrador seleccionado ya no pertenece al equipo.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+        event.editMessage("⭐ <@" + ticket.openerId() + ">, seleccionaste a "
+                        + selectedStaff.getAsMention() + ". Ahora valora la atención recibida.")
+                .setComponents(panels.feedbackButtons(ticket.id(), staffId))
                 .queue();
     }
 
@@ -301,9 +346,10 @@ public final class TicketListener extends ListenerAdapter {
 
     private void submitRating(ButtonInteractionEvent event) {
         String[] parts = event.getComponentId().split(":");
-        if (parts.length != 4) throw new IllegalArgumentException("Encuesta no válida");
+        if (parts.length != 5) throw new IllegalArgumentException("Encuesta no válida");
         long ticketId = Long.parseLong(parts[2]);
-        int rating = Integer.parseInt(parts[3]);
+        long staffId = Long.parseUnsignedLong(parts[3]);
+        int rating = Integer.parseInt(parts[4]);
         if (rating < 1 || rating > 5) throw new IllegalArgumentException("Valoración no válida");
         Ticket ticket = tickets.findById(ticketId)
                 .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
@@ -315,7 +361,12 @@ public final class TicketListener extends ListenerAdapter {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
         }
-        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), rating)) {
+        Member selectedStaff = requireGuild(event.getGuild()).getMemberById(staffId);
+        if (selectedStaff == null || !permissions.isStaff(selectedStaff)) {
+            event.reply("❌ El administrador seleccionado ya no pertenece al equipo.").setEphemeral(true).queue();
+            return;
+        }
+        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), staffId, rating)) {
             event.reply("⚠️ Esta encuesta ya fue respondida.").setEphemeral(true).queue();
             return;
         }
@@ -323,8 +374,8 @@ public final class TicketListener extends ListenerAdapter {
         event.deferReply(true).queue();
         String reason = "Cierre automático después de una valoración de " + rating + "/5";
         Path transcript = transcripts.generate(ticket);
-        tickets.close(ticket.id(), event.getUser().getIdLong(), reason, transcript.toString());
-        sendClosedTicketLog(event.getGuild(), ticket, event.getUser().getAsMention(), reason, transcript, rating);
+        tickets.close(ticket.id(), staffId, reason, transcript.toString());
+        sendClosedTicketLog(event.getGuild(), ticket, selectedStaff.getAsMention(), reason, transcript, rating);
         event.getHook().editOriginal("✅ Gracias por tu valoración de **" + rating
                 + "/5**. El ticket se cerrará automáticamente.").queue();
         if (event.getChannel() instanceof TextChannel channel) {
@@ -520,7 +571,7 @@ public final class TicketListener extends ListenerAdapter {
         return type.channelPrefix() + "-" + safe + "-" + user.getId().substring(Math.max(0, user.getId().length() - 4));
     }
 
-    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String steamId,
+    private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String gameName,
                                                                           String subject, String description,
                                                                           Long accusedId, String evidence) {
         String emoji = switch (type) {
@@ -534,7 +585,7 @@ public final class TicketListener extends ListenerAdapter {
                 .setTitle(emoji + " Ticket: " + type.label())
                 .setDescription("Tu solicitud ha sido recibida. Describe el caso con el mayor detalle posible para que podamos ayudarte más rápido.")
                 .addField("👤 Creador", creator.getAsMention(), true)
-                .addField("🎮 SteamID64", "`" + steamId + "`", true)
+                .addField("🎮 Nombre en el juego", gameName, true)
                 .addField("🛡️ Equipo responsable", "<@&" + responsibleRole + ">", true)
                 .addField("📝 Qué ha sucedido", "**" + truncate(subject, 140) + "**\n" + truncate(description, 850), false);
         if (accusedId != null) embed.addField("Jugador reportado", "<@" + accusedId + "> (`" + accusedId + "`)", false);
