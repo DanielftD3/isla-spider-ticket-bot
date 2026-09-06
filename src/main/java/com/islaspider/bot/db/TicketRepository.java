@@ -129,10 +129,12 @@ public final class TicketRepository {
         }
     }
 
-    public boolean saveFeedback(long ticketId, long userId, long attendedBy, int rating) {
+    public boolean saveFeedback(long ticketId, long userId, long attendedBy,
+                                int attentionRating, int solutionRating, String comment) {
         String sql = """
-                INSERT INTO ticket_feedback(ticket_id, user_id, attended_by, rating)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO ticket_feedback
+                    (ticket_id, user_id, attended_by, attention_rating, solution_rating, comment)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (ticket_id) DO NOTHING
                 """;
         try (Connection connection = database.connection();
@@ -140,7 +142,9 @@ public final class TicketRepository {
             statement.setLong(1, ticketId);
             statement.setLong(2, userId);
             statement.setLong(3, attendedBy);
-            statement.setInt(4, rating);
+            statement.setInt(4, attentionRating);
+            statement.setInt(5, solutionRating);
+            statement.setString(6, comment);
             return statement.executeUpdate() == 1;
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo guardar la valoración", exception);

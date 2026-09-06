@@ -10,8 +10,9 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 - Canal privado para el autor, Staff y Moderación.
 - Un único botón dentro del ticket: **Enviar encuesta**.
 - Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
-- Log visual de pruebas enviadas.
-- Transcripción HTML al cerrar y copia en el canal de logs.
+- Log visual de imágenes y archivos en un canal independiente.
+- Transcripción HTML al cerrar y copia archivada en su propio canal.
+- Valoraciones con administrador, atención, solución y comentario.
 - Apelaciones enviadas a un canal privado de administración.
 - Resultado de la apelación por mensaje directo.
 - Panel de Moderación para añadir, quitar y revisar warns, además de mute, kick y ban.
@@ -79,7 +80,10 @@ Completa todos los IDs:
 |---|---|
 | `GUILD_ID` | ID del servidor de Discord |
 | `TICKET_CATEGORY_ID` | Categoría donde se crearán los canales privados |
-| `TICKET_LOG_CHANNEL_ID` | Canal que recibe pruebas y transcripciones |
+| `TICKET_LOG_CHANNEL_ID` | Canal que recibe el resumen de los tickets cerrados |
+| `TICKET_IMAGE_CHANNEL_ID` | Canal que muestra las imágenes y archivos enviados |
+| `TICKET_TRANSCRIPT_CHANNEL_ID` | Canal que conserva las copias HTML de transcripciones |
+| `TICKET_RATING_CHANNEL_ID` | Canal que recibe las valoraciones de los tickets |
 | `APPEAL_LOG_CHANNEL_ID` | Canal privado donde administración revisa apelaciones |
 | `STAFF_ROLE_ID` | Rol que atiende bugs y ayuda |
 | `MOD_ROLE_ID` | Rol autorizado para strikes y sanciones |
@@ -125,7 +129,7 @@ Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
 | Panel de tickets | Bug, ayuda, reporte y apelación |
 | Dentro de un ticket | Enviar encuesta |
 | Panel de Moderación | Añadir, quitar o revisar warns; advertir sin puntos; mute, kick y ban |
-| Encuesta | Selección del administrador, valoración de 1 a 5 estrellas y cierre automático |
+| Encuesta | Selección del administrador, atención y solución de 1 a 10, comentario y cierre automático |
 
 Si se añade un warn desde un ticket de reporte, el formulario propone automáticamente el ID del jugador denunciado.
 

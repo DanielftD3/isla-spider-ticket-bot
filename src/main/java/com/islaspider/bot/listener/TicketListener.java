@@ -47,7 +47,7 @@ public final class TicketListener extends ListenerAdapter {
     private static final String STRIKE_MODAL_PREFIX = "ticket:strike-form:";
     private static final String CLOSE_MODAL_PREFIX = "ticket:close-form:";
     private static final String APPEAL_DECISION_PREFIX = "appeal:decision-form:";
-    private static final String RATING_BUTTON_PREFIX = "ticket:rating:";
+    private static final String FEEDBACK_MODAL_PREFIX = "ticket:feedback-form:";
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
 
     private final BotConfig config;
@@ -95,6 +95,8 @@ public final class TicketListener extends ListenerAdapter {
                 addStrikeFromTicket(event, Long.parseLong(id.substring(STRIKE_MODAL_PREFIX.length())));
             } else if (id.startsWith(CLOSE_MODAL_PREFIX)) {
                 closeTicket(event, Long.parseLong(id.substring(CLOSE_MODAL_PREFIX.length())));
+            } else if (id.startsWith(FEEDBACK_MODAL_PREFIX)) {
+                submitFeedback(event, id.substring(FEEDBACK_MODAL_PREFIX.length()));
             } else if (id.startsWith(APPEAL_DECISION_PREFIX)) {
                 decideAppeal(event, id.substring(APPEAL_DECISION_PREFIX.length()));
             }
@@ -109,8 +111,6 @@ public final class TicketListener extends ListenerAdapter {
             String id = event.getComponentId();
             if (PanelFactory.SURVEY_BUTTON_ID.equals(id)) {
                 sendSurvey(event);
-            } else if (id.startsWith(RATING_BUTTON_PREFIX)) {
-                submitRating(event);
             } else if (id.startsWith("appeal:approve:") || id.startsWith("appeal:reject:")) {
                 openAppealDecisionModal(event);
             }
@@ -324,10 +324,17 @@ public final class TicketListener extends ListenerAdapter {
                     .setEphemeral(true).queue();
             return;
         }
-        event.editMessage("⭐ <@" + ticket.openerId() + ">, seleccionaste a "
-                        + selectedStaff.getAsMention() + ". Ahora valora la atención recibida.")
-                .setComponents(panels.feedbackButtons(ticket.id(), staffId))
-                .queue();
+        Modal modal = Modal.create(FEEDBACK_MODAL_PREFIX + ticket.id() + ":" + staffId,
+                        "Valorar atención del ticket")
+                .addComponents(
+                        label("Atención (1 a 10)", "attention", TextInputStyle.SHORT,
+                                "Ejemplo: 10", 1, 2, true),
+                        label("Solución (1 a 10)", "solution", TextInputStyle.SHORT,
+                                "Ejemplo: 10", 1, 2, true),
+                        label("Valoración", "comment", TextInputStyle.PARAGRAPH,
+                                "Cuéntanos cómo fue la atención recibida", 3, 1000, true))
+                .build();
+        event.replyModal(modal).queue();
     }
 
     private void sendTranscriptPreview(ButtonInteractionEvent event) {
@@ -344,13 +351,14 @@ public final class TicketListener extends ListenerAdapter {
                 .queue();
     }
 
-    private void submitRating(ButtonInteractionEvent event) {
-        String[] parts = event.getComponentId().split(":");
-        if (parts.length != 5) throw new IllegalArgumentException("Encuesta no válida");
-        long ticketId = Long.parseLong(parts[2]);
-        long staffId = Long.parseUnsignedLong(parts[3]);
-        int rating = Integer.parseInt(parts[4]);
-        if (rating < 1 || rating > 5) throw new IllegalArgumentException("Valoración no válida");
+    private void submitFeedback(ModalInteractionEvent event, String ticketAndStaff) {
+        String[] parts = ticketAndStaff.split(":");
+        if (parts.length != 2) throw new IllegalArgumentException("Encuesta no válida");
+        long ticketId = Long.parseLong(parts[0]);
+        long staffId = Long.parseUnsignedLong(parts[1]);
+        int attention = parseRating(value(event, "attention"));
+        int solution = parseRating(value(event, "solution"));
+        String comment = value(event, "comment");
         Ticket ticket = tickets.findById(ticketId)
                 .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
         if (ticket.openerId() != event.getUser().getIdLong()) {
@@ -366,23 +374,42 @@ public final class TicketListener extends ListenerAdapter {
             event.reply("❌ El administrador seleccionado ya no pertenece al equipo.").setEphemeral(true).queue();
             return;
         }
-        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), staffId, rating)) {
-            event.reply("⚠️ Esta encuesta ya fue respondida.").setEphemeral(true).queue();
+        event.deferReply(true).queue();
+        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), staffId,
+                attention, solution, comment)) {
+            event.getHook().editOriginal("⚠️ Esta encuesta ya fue respondida.").queue();
             return;
         }
 
-        event.deferReply(true).queue();
-        String reason = "Cierre automático después de una valoración de " + rating + "/5";
+        String reason = "Cierre automático después de completar la valoración";
         Path transcript = transcripts.generate(ticket);
         tickets.close(ticket.id(), staffId, reason, transcript.toString());
-        sendClosedTicketLog(event.getGuild(), ticket, selectedStaff.getAsMention(), reason, transcript, rating);
-        event.getHook().editOriginal("✅ Gracias por tu valoración de **" + rating
-                + "/5**. El ticket se cerrará automáticamente.").queue();
+        sendRatingLog(event.getGuild(), ticket, selectedStaff, attention, solution, comment);
+        sendClosedTicketLogs(event.getGuild(), ticket, staffId, reason, transcript);
+        event.getHook().editOriginal("✅ Gracias por tu valoración. El ticket se cerrará automáticamente.").queue();
         if (event.getChannel() instanceof TextChannel channel) {
-            channel.sendMessage("⭐ Encuesta completada por <@" + ticket.openerId() + ">: **"
-                    + rating + "/5**. Cerrando ticket…").queue();
+            channel.sendMessage("⭐ Encuesta completada por <@" + ticket.openerId()
+                    + ">. Cerrando ticket…").queue();
             if (config.deleteTicketChannelOnClose()) channel.delete().queueAfter(5, TimeUnit.SECONDS);
         }
+    }
+
+    private void sendRatingLog(Guild guild, Ticket ticket, Member selectedStaff,
+                               int attention, int solution, String comment) {
+        if (guild == null) return;
+        TextChannel ratings = guild.getTextChannelById(config.ticketRatingChannelId());
+        if (ratings == null) return;
+        ratings.sendMessageEmbeds(new EmbedBuilder()
+                        .setColor(new Color(255, 193, 7))
+                        .setTitle("⭐ Nueva valoración")
+                        .addField("Usuario", "<@" + ticket.openerId() + ">", true)
+                        .addField("Atención", attention + "/10", true)
+                        .addField("Solución", solution + "/10", true)
+                        .addField("Valoración", truncate(comment, 1000), false)
+                        .setFooter("Ticket #" + ticket.id() + " · Atendido por " + selectedStaff.getEffectiveName())
+                        .setTimestamp(OffsetDateTime.now())
+                        .build())
+                .queue();
     }
 
     private void addStrikeFromTicket(ModalInteractionEvent event, long ticketId) {
@@ -429,7 +456,7 @@ public final class TicketListener extends ListenerAdapter {
         String reason = value(event, "close-reason");
         tickets.close(ticket.id(), event.getUser().getIdLong(), reason, transcript.toString());
 
-        sendClosedTicketLog(event.getGuild(), ticket, event.getUser().getAsMention(), reason, transcript, null);
+        sendClosedTicketLogs(event.getGuild(), ticket, event.getUser().getIdLong(), reason, transcript);
         event.getHook().editOriginal("✅ Ticket cerrado. La transcripción fue generada.").queue();
         if (event.getChannel() instanceof TextChannel channel) {
             channel.sendMessage("🔒 Ticket cerrado por " + event.getUser().getAsMention() + ". Motivo: " + reason).queue();
@@ -437,23 +464,50 @@ public final class TicketListener extends ListenerAdapter {
         }
     }
 
-    private void sendClosedTicketLog(Guild guild, Ticket ticket, String closerMention, String reason,
-                                     Path transcript, Integer rating) {
+    private void sendClosedTicketLogs(Guild guild, Ticket ticket, long generatedBy,
+                                      String reason, Path transcript) {
         if (guild == null) return;
+        String openedAt = "<t:" + ticket.createdAt().toEpochSecond() + ":F>";
+        String claimedBy = ticket.claimedBy() == null ? "No reclamado" : "<@" + ticket.claimedBy() + ">";
+
         TextChannel log = guild.getTextChannelById(config.ticketLogChannelId());
-        if (log == null) return;
-        EmbedBuilder embed = new EmbedBuilder()
-                .setColor(Color.RED)
-                .setTitle("🔒 Ticket cerrado #" + ticket.id())
-                .addField("Tipo", ticket.type().label(), true)
-                .addField("Creado por", "<@" + ticket.openerId() + ">", true)
-                .addField("Cerrado por", closerMention, true)
-                .addField("Motivo", truncate(reason, 1000), false)
-                .setTimestamp(OffsetDateTime.now());
-        if (rating != null) embed.addField("Valoración", rating + "/5 ⭐", true);
-        log.sendMessageEmbeds(embed.build())
+        if (log != null) {
+            log.sendMessageEmbeds(new EmbedBuilder()
+                            .setColor(new Color(87, 242, 135))
+                            .setTitle("Ticket cerrado")
+                            .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
+                            .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
+                            .addField("⛔ Cerrado por", "<@" + generatedBy + ">", true)
+                            .addField("🕘 Fecha de apertura", openedAt, true)
+                            .addField("🟣 Reclamado por", claimedBy, true)
+                            .addField("❓ Motivo", truncate(reason, 1000), false)
+                            .setTimestamp(OffsetDateTime.now())
+                            .build())
+                    .queue();
+        }
+
+        TextChannel transcriptLog = guild.getTextChannelById(config.ticketTranscriptChannelId());
+        if (transcriptLog == null) return;
+        transcriptLog.sendMessageEmbeds(new EmbedBuilder()
+                        .setColor(new Color(87, 242, 135))
+                        .setTitle("Copia archivada de transcripción")
+                        .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
+                        .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
+                        .addField("⛔ Generada por", "<@" + generatedBy + ">", true)
+                        .addField("🕘 Fecha de apertura", openedAt, true)
+                        .addField("🟣 Reclamado por", claimedBy, true)
+                        .addField("❓ Motivo", truncate(reason, 1000), false)
+                        .setTimestamp(OffsetDateTime.now())
+                        .build())
                 .addFiles(FileUpload.fromData(transcript.toFile()))
-                .queue();
+                .queue(message -> {
+                    if (message.getAttachments().isEmpty()) return;
+                    String transcriptUrl = message.getAttachments().getFirst().getUrl();
+                    message.editMessageComponents(ActionRow.of(
+                                    net.dv8tion.jda.api.components.buttons.Button.link(
+                                            transcriptUrl, "Ver transcripción")))
+                            .queue();
+                });
     }
 
     private void openAppealDecisionModal(ButtonInteractionEvent event) {
@@ -561,6 +615,16 @@ public final class TicketListener extends ListenerAdapter {
             return points;
         } catch (NumberFormatException exception) {
             throw new IllegalArgumentException("Los puntos deben estar entre 1 y 10");
+        }
+    }
+
+    private static int parseRating(String input) {
+        try {
+            int rating = Integer.parseInt(input.trim());
+            if (rating < 1 || rating > 10) throw new NumberFormatException();
+            return rating;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("Las valoraciones deben estar entre 1 y 10");
         }
     }
 

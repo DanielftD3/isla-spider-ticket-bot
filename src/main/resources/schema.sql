@@ -85,8 +85,15 @@ CREATE TABLE IF NOT EXISTS ticket_feedback (
     ticket_id BIGINT NOT NULL UNIQUE REFERENCES tickets(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL,
     attended_by BIGINT,
-    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+    attention_rating INTEGER CHECK (attention_rating BETWEEN 1 AND 10),
+    solution_rating INTEGER CHECK (solution_rating BETWEEN 1 AND 10),
+    comment TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE ticket_feedback ADD COLUMN IF NOT EXISTS attended_by BIGINT;
+ALTER TABLE ticket_feedback ADD COLUMN IF NOT EXISTS attention_rating INTEGER CHECK (attention_rating BETWEEN 1 AND 10);
+ALTER TABLE ticket_feedback ADD COLUMN IF NOT EXISTS solution_rating INTEGER CHECK (solution_rating BETWEEN 1 AND 10);
+ALTER TABLE ticket_feedback ADD COLUMN IF NOT EXISTS comment TEXT;
+ALTER TABLE ticket_feedback ALTER COLUMN rating DROP NOT NULL;

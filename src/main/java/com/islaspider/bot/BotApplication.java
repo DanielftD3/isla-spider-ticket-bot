@@ -76,6 +76,15 @@ public final class BotApplication {
         if (guild.getTextChannelById(config.ticketLogChannelId()) == null) {
             throw new IllegalStateException("TICKET_LOG_CHANNEL_ID no corresponde a un canal de texto");
         }
+        if (guild.getTextChannelById(config.ticketImageChannelId()) == null) {
+            throw new IllegalStateException("TICKET_IMAGE_CHANNEL_ID no corresponde a un canal de texto");
+        }
+        if (guild.getTextChannelById(config.ticketTranscriptChannelId()) == null) {
+            throw new IllegalStateException("TICKET_TRANSCRIPT_CHANNEL_ID no corresponde a un canal de texto");
+        }
+        if (guild.getTextChannelById(config.ticketRatingChannelId()) == null) {
+            throw new IllegalStateException("TICKET_RATING_CHANNEL_ID no corresponde a un canal de texto");
+        }
         if (guild.getTextChannelById(config.appealLogChannelId()) == null) {
             throw new IllegalStateException("APPEAL_LOG_CHANNEL_ID no corresponde a un canal de texto");
         }
