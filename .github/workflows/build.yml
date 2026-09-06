@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  windows-build:
+    name: Windows · Java 21
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -25,4 +27,47 @@ jobs:
 
       - name: Build and test
         shell: pwsh
+        run: mvn --batch-mode --no-transfer-progress verify
+
+      - name: Save runnable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: isla-spider-ticket-bot
+          path: target/isla-spider-ticket-bot.jar
+          if-no-files-found: error
+
+  postgres-integration:
+    name: PostgreSQL · integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: isla_spider_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d isla_spider_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DB_URL: jdbc:postgresql://localhost:5432/isla_spider_test
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run unit and PostgreSQL tests
         run: mvn --batch-mode --no-transfer-progress verify

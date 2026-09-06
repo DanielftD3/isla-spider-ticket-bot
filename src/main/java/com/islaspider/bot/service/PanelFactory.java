@@ -100,13 +100,24 @@ public final class PanelFactory {
                 .withEmoji(Emoji.fromUnicode("⭐")));
     }
 
-    public ActionRow surveyStaffMenu(long ticketId, List<Member> staffMembers) {
-        StringSelectMenu.Builder menu = StringSelectMenu.create(SURVEY_STAFF_PREFIX + ticketId)
-                .setPlaceholder("Administrador que te atendió")
-                .setRequiredRange(1, 1);
-        staffMembers.stream().limit(25).forEach(member -> menu.addOption(
-                member.getEffectiveName(), member.getId(), "@" + member.getUser().getName()));
-        return ActionRow.of(menu.build());
+    public List<ActionRow> surveyStaffMenus(long ticketId, List<Member> staffMembers) {
+        int totalPages = Math.min(5, (staffMembers.size() + 24) / 25);
+        java.util.ArrayList<ActionRow> rows = new java.util.ArrayList<>(totalPages);
+        for (int page = 0; page < totalPages; page++) {
+            int from = page * 25;
+            int to = Math.min(from + 25, staffMembers.size());
+            String placeholder = totalPages == 1
+                    ? "Administrador que te atendió"
+                    : "Administrador que te atendió · " + (page + 1) + "/" + totalPages;
+            StringSelectMenu.Builder menu = StringSelectMenu
+                    .create(SURVEY_STAFF_PREFIX + ticketId + ":" + page)
+                    .setPlaceholder(placeholder)
+                    .setRequiredRange(1, 1);
+            staffMembers.subList(from, to).forEach(member -> menu.addOption(
+                    member.getEffectiveName(), member.getId(), "@" + member.getUser().getName()));
+            rows.add(ActionRow.of(menu.build()));
+        }
+        return List.copyOf(rows);
     }
 
     public MessageEmbed moderationPanel(long activeWarns, long sanctionedUsers) {

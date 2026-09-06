@@ -29,9 +29,24 @@ public final class TranscriptService {
     public Path generate(Ticket ticket) {
         List<TicketMessage> messages = tickets.listMessages(ticket.id());
         List<TicketAttachment> attachments = tickets.listAttachments(ticket.id());
-        Map<Long, List<TicketAttachment>> attachmentsByMessage = attachments.stream()
+        String html = render(ticket, messages, attachments);
+
+        try {
+            Files.createDirectories(config.transcriptDirectory());
+            Path output = config.transcriptDirectory().resolve("ticket-" + ticket.id() + ".html").toAbsolutePath();
+            Files.writeString(output, html, StandardCharsets.UTF_8);
+            return output;
+        } catch (IOException exception) {
+            throw new IllegalStateException("No se pudo generar la transcripcion", exception);
+        }
+    }
+
+    static String render(Ticket ticket, List<TicketMessage> messages, List<TicketAttachment> attachments) {
+        Map<Long, List<TicketAttachment>> rawAttachments = attachments.stream()
                 .filter(item -> item.messageId() != null)
                 .collect(Collectors.groupingBy(TicketAttachment::messageId));
+        Map<Long, List<TicketAttachment>> attachmentsByMessage = rawAttachments.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> preferMirrors(entry.getValue())));
 
         StringBuilder body = new StringBuilder();
         for (TicketMessage message : messages) {
@@ -58,18 +73,20 @@ public final class TranscriptService {
                 </style></head><body><main><h1>Transcripción del ticket #%d</h1>
                 <section class="summary"><p><b>Tipo:</b> %s</p><p><b>Nombre en el juego:</b> %s</p>
                 <p><b>Usuario de Discord:</b> %d</p>
-                <p><b>Asunto:</b> %s</p><p><b>Descripción:</b> %s</p></section>%s</main></body></html>
+                <p><b>Asunto:</b> %s</p><p><b>Descripción:</b> %s</p>
+                <p><b>Jugador reportado:</b> %s</p><p><b>Pruebas iniciales:</b> %s</p></section>%s</main></body></html>
                 """.formatted(ticket.id(), ticket.id(), escape(ticket.type().label()), escape(ticket.gameName()),
-                ticket.openerId(), escape(ticket.subject()), withBreaks(ticket.description()), body);
+                ticket.openerId(), escape(ticket.subject()), withBreaks(ticket.description()),
+                ticket.accusedUserId() == null ? "No aplica" : escape(String.valueOf(ticket.accusedUserId())),
+                ticket.evidence() == null || ticket.evidence().isBlank() ? "Sin pruebas iniciales" : withBreaks(ticket.evidence()),
+                body);
+        return html;
+    }
 
-        try {
-            Files.createDirectories(config.transcriptDirectory());
-            Path output = config.transcriptDirectory().resolve("ticket-" + ticket.id() + ".html").toAbsolutePath();
-            Files.writeString(output, html, StandardCharsets.UTF_8);
-            return output;
-        } catch (IOException exception) {
-            throw new IllegalStateException("No se pudo generar la transcripcion", exception);
-        }
+    private static List<TicketAttachment> preferMirrors(List<TicketAttachment> attachments) {
+        boolean hasMirror = attachments.stream().anyMatch(item -> "MIRROR".equals(item.kind()));
+        if (!hasMirror) return attachments;
+        return attachments.stream().filter(item -> !"FILE".equals(item.kind())).toList();
     }
 
     private static String withBreaks(String value) {

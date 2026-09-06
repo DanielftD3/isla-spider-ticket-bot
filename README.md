@@ -7,12 +7,13 @@ Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y 
 - Panel con menú para `Bug`, `Ayuda`, `Reporte` y `Apelación`.
 - Formularios distintos según el tipo de caso.
 - Identificación mediante el nombre dentro del juego.
-- Canal privado para el autor, Staff y Moderación.
+- Canal privado para el autor y el equipo responsable: Staff en bugs/ayuda y Moderación en reportes.
 - Un único botón dentro del ticket: **Enviar encuesta**.
 - Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
 - Log visual de imágenes y archivos en un canal independiente.
 - Transcripción HTML al cerrar y copia archivada en su propio canal.
 - Valoraciones con administrador, atención, solución y comentario.
+- Cierre seguro: el canal solo se elimina después de confirmar logs, valoración, transcripción y PostgreSQL.
 - Apelaciones enviadas a un canal privado de administración.
 - Resultado de la apelación por mensaje directo.
 - Panel de Moderación para añadir, quitar y revisar warns, además de mute, kick y ban.
@@ -52,7 +53,6 @@ Las sanciones automáticas están desactivadas inicialmente con `AUTO_APPLY_STRI
    - Attach Files.
    - Read Message History.
    - Manage Channels.
-   - Manage Roles.
    - Moderate Members.
    - Kick Members.
    - Ban Members.
@@ -119,6 +119,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
 ```
 
 Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
+El instalador fija la ruta exacta de Java, reinicia el proceso si falla y escribe la salida en `logs\bot.log`.
 
 ## Paneles y botones
 
@@ -130,8 +131,6 @@ Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
 | Dentro de un ticket | Enviar encuesta |
 | Panel de Moderación | Añadir, quitar o revisar warns; advertir sin puntos; mute, kick y ban |
 | Encuesta | Selección del administrador, atención y solución de 1 a 10, comentario y cierre automático |
-
-Si se añade un warn desde un ticket de reporte, el formulario propone automáticamente el ID del jugador denunciado.
 
 ## Política sugerida para empezar
 
@@ -165,3 +164,4 @@ src/main/java/com/islaspider/bot/
 - **No puede mutear o banear:** sube el rol del bot por encima del usuario objetivo.
 - **Error de PostgreSQL:** verifica `DB_URL`, usuario, contraseña y que el servicio escuche en `localhost:5432`.
 - **No llegan mensajes privados:** el usuario puede tener bloqueados los DMs del servidor; el caso queda registrado igualmente.
+- **La tarea de Windows se detiene:** revisa `logs\bot.log` y el historial de `IslaSpiderTicketBot` en el Programador de tareas.
