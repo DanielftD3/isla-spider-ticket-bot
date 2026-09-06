@@ -1,8 +1,6 @@
 package com.islaspider.bot.listener;
 
 import com.islaspider.bot.config.BotConfig;
-import com.islaspider.bot.db.ModerationRepository;
-import com.islaspider.bot.db.StrikeRepository;
 import com.islaspider.bot.db.TicketRepository;
 import com.islaspider.bot.model.Ticket;
 import com.islaspider.bot.model.TicketType;
@@ -17,9 +15,9 @@ import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
-import net.dv8tion.jda.api.entities.UserSnowflake;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
@@ -31,40 +29,35 @@ import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.Color;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class TicketListener extends ListenerAdapter {
     private static final String TICKET_MODAL_PREFIX = "ticket:form:";
-    private static final String STRIKE_MODAL_PREFIX = "ticket:strike-form:";
-    private static final String CLOSE_MODAL_PREFIX = "ticket:close-form:";
     private static final String APPEAL_DECISION_PREFIX = "appeal:decision-form:";
     private static final String FEEDBACK_MODAL_PREFIX = "ticket:feedback-form:";
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
 
     private final BotConfig config;
     private final TicketRepository tickets;
-    private final StrikeRepository strikes;
-    private final ModerationRepository moderation;
     private final PermissionService permissions;
     private final PanelFactory panels;
     private final TranscriptService transcripts;
 
-    public TicketListener(BotConfig config, TicketRepository tickets, StrikeRepository strikes,
-                          ModerationRepository moderation, PermissionService permissions,
+    public TicketListener(BotConfig config, TicketRepository tickets, PermissionService permissions,
                           PanelFactory panels, TranscriptService transcripts) {
         this.config = config;
         this.tickets = tickets;
-        this.strikes = strikes;
-        this.moderation = moderation;
         this.permissions = permissions;
         this.panels = panels;
         this.transcripts = transcripts;
@@ -91,10 +84,6 @@ public final class TicketListener extends ListenerAdapter {
         try {
             if (id.startsWith(TICKET_MODAL_PREFIX)) {
                 createTicket(event, TicketType.fromCode(id.substring(TICKET_MODAL_PREFIX.length())));
-            } else if (id.startsWith(STRIKE_MODAL_PREFIX)) {
-                addStrikeFromTicket(event, Long.parseLong(id.substring(STRIKE_MODAL_PREFIX.length())));
-            } else if (id.startsWith(CLOSE_MODAL_PREFIX)) {
-                closeTicket(event, Long.parseLong(id.substring(CLOSE_MODAL_PREFIX.length())));
             } else if (id.startsWith(FEEDBACK_MODAL_PREFIX)) {
                 submitFeedback(event, id.substring(FEEDBACK_MODAL_PREFIX.length()));
             } else if (id.startsWith(APPEAL_DECISION_PREFIX)) {
@@ -156,11 +145,11 @@ public final class TicketListener extends ListenerAdapter {
         String evidence = optionalValue(event, "evidence");
         Long accusedId = type == TicketType.REPORT ? parseDiscordId(value(event, "accused-id")) : null;
 
+        event.deferReply(true).queue();
         if (tickets.hasOpenTicket(guild.getIdLong(), event.getUser().getIdLong(), type)) {
-            event.reply("⚠️ Ya tienes un ticket abierto de esta categoría.").setEphemeral(true).queue();
+            event.getHook().editOriginal("⚠️ Ya tienes un ticket abierto de esta categoría.").queue();
             return;
         }
-        event.deferReply(true).queue();
         if (type == TicketType.APPEAL) {
             createAppeal(event, guild, gameName, subject, description, evidence);
             return;
@@ -179,29 +168,31 @@ public final class TicketListener extends ListenerAdapter {
                 Permission.MESSAGE_HISTORY, Permission.MESSAGE_ATTACH_FILES, Permission.MESSAGE_EMBED_LINKS);
         EnumSet<Permission> staffAllowed = EnumSet.copyOf(userAllowed);
         staffAllowed.add(Permission.MESSAGE_MANAGE);
+        Role responsibleRole = type == TicketType.REPORT ? modRole : staffRole;
 
         var action = guild.createTextChannel(channelName(type, event.getUser()), category)
                 .addPermissionOverride(guild.getPublicRole(), null, EnumSet.of(Permission.VIEW_CHANNEL))
                 .addPermissionOverride(opener, userAllowed, null)
-                .addPermissionOverride(staffRole, staffAllowed, null);
-        if (modRole.getIdLong() != staffRole.getIdLong()) {
-            action.addPermissionOverride(modRole, staffAllowed, null);
-        }
+                .addPermissionOverride(responsibleRole, staffAllowed, null);
 
         Long finalAccusedId = accusedId;
         action.queue(channel -> {
             try {
                 long ticketId = tickets.create(guild.getIdLong(), channel.getIdLong(), event.getUser().getIdLong(),
-                        type, gameName, subject, description, finalAccusedId, evidence);
-                saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
-                channel.sendMessage(event.getUser().getAsMention() + " <@&" + config.staffRoleId() + ">")
+                        type, gameName, subject, description, finalAccusedId, evidence, extractLinks(evidence));
+                channel.sendMessage(event.getUser().getAsMention() + " " + responsibleRole.getAsMention())
                         .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
                                 description, finalAccusedId, evidence))
                         .setComponents(panels.ticketControls())
-                        .queue();
-                event.getHook().editOriginal("✅ Ticket creado: " + channel.getAsMention()).queue();
+                        .queue(message -> event.getHook().editOriginal("✅ Ticket creado: " + channel.getAsMention()).queue(),
+                                error -> {
+                                    markFailedQuietly(ticketId, "Discord no permitió publicar el mensaje inicial");
+                                    channel.delete().reason("No se pudo publicar el mensaje inicial").queue(null, ignored -> {});
+                                    event.getHook().editOriginal("❌ No se pudo publicar el ticket: "
+                                            + safeMessage(error)).queue();
+                                });
             } catch (RuntimeException exception) {
-                channel.delete().reason("Error al guardar el ticket").queue();
+                channel.delete().reason("Error al guardar el ticket").queue(null, ignored -> {});
                 event.getHook().editOriginal("❌ No se pudo guardar el ticket: " + safeMessage(exception)).queue();
             }
         }, error -> event.getHook().editOriginal("❌ Discord no permitió crear el canal: " + error.getMessage()).queue());
@@ -210,10 +201,10 @@ public final class TicketListener extends ListenerAdapter {
     private void createAppeal(ModalInteractionEvent event, Guild guild, String gameName, String subject,
                               String description, String evidence) {
         long ticketId = tickets.create(guild.getIdLong(), null, event.getUser().getIdLong(), TicketType.APPEAL,
-                gameName, subject, description, null, evidence);
-        saveInitialLinks(ticketId, event.getUser().getIdLong(), evidence);
+                gameName, subject, description, null, evidence, extractLinks(evidence));
         TextChannel log = guild.getTextChannelById(config.appealLogChannelId());
         if (log == null) {
+            markFailedQuietly(ticketId, "El canal de apelaciones no existe");
             event.getHook().editOriginal("❌ No existe el canal configurado para apelaciones.").queue();
             return;
         }
@@ -230,44 +221,18 @@ public final class TicketListener extends ListenerAdapter {
                 .setComponents(ActionRow.of(
                         net.dv8tion.jda.api.components.buttons.Button.success("appeal:approve:" + ticketId, "Aprobar"),
                         net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar")))
-                .queue();
-        event.getUser().openPrivateChannel()
-                .flatMap(channel -> channel.sendMessage("⚖️ Recibimos tu apelación **#" + ticketId + "**. Te responderemos por este medio."))
-                .queue(null, ignored -> {});
-        event.getHook().editOriginal("✅ Apelación #" + ticketId + " enviada. La respuesta llegará por mensaje privado.").queue();
-    }
-
-    private void claimTicket(ButtonInteractionEvent event) {
-        if (!permissions.isStaff(event.getMember())) {
-            event.reply("❌ Solo el equipo puede reclamar tickets.").setEphemeral(true).queue();
-            return;
-        }
-        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
-        boolean claimed = tickets.claim(ticket.id(), event.getUser().getIdLong());
-        if (claimed) {
-            event.reply("✋ Ticket reclamado por " + event.getUser().getAsMention() + ".").queue();
-        } else {
-            event.reply("⚠️ Este ticket ya fue reclamado.").setEphemeral(true).queue();
-        }
-    }
-
-    private void openStrikeModal(ButtonInteractionEvent event) {
-        if (!permissions.isModerator(event.getMember())) {
-            event.reply("❌ Solo Moderación puede añadir warns.").setEphemeral(true).queue();
-            return;
-        }
-        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
-        TextInput.Builder target = TextInput.create("target-id", TextInputStyle.SHORT)
-                .setPlaceholder("ID de Discord del sancionado").setRequiredRange(15, 25);
-        if (ticket.accusedUserId() != null) target.setValue(String.valueOf(ticket.accusedUserId()));
-        Modal modal = Modal.create(STRIKE_MODAL_PREFIX + ticket.id(), "Añadir warn / strike")
-                .addComponents(
-                        Label.of("Usuario sancionado", target.build()),
-                        label("Cantidad de puntos", "points", TextInputStyle.SHORT, "Normalmente 1", 1, 2, true),
-                        label("Motivo", "reason", TextInputStyle.PARAGRAPH, "Norma incumplida y contexto", 5, 1000, true),
-                        label("Enlace de evidencia", "strike-evidence", TextInputStyle.PARAGRAPH, "Opcional", 0, 1000, false))
-                .build();
-        event.replyModal(modal).queue();
+                .queue(message -> {
+                    event.getUser().openPrivateChannel()
+                            .flatMap(channel -> channel.sendMessage("⚖️ Recibimos tu apelación **#" + ticketId
+                                    + "**. Te responderemos por este medio."))
+                            .queue(null, ignored -> {});
+                    event.getHook().editOriginal("✅ Apelación #" + ticketId
+                            + " enviada. La respuesta llegará por mensaje privado.").queue();
+                }, error -> {
+                    markFailedQuietly(ticketId, "Discord no permitió publicar la apelación");
+                    event.getHook().editOriginal("❌ No se pudo publicar la apelación: "
+                            + safeMessage(error) + ". Puedes volver a intentarlo.").queue();
+                });
     }
 
     private void sendSurvey(ButtonInteractionEvent event) {
@@ -281,30 +246,33 @@ public final class TicketListener extends ListenerAdapter {
             return;
         }
         Guild guild = requireGuild(event.getGuild());
-        Role staffRole = guild.getRoleById(config.staffRoleId());
-        Role moderatorRole = guild.getRoleById(config.moderatorRoleId());
-        if (staffRole == null || moderatorRole == null) {
-            throw new IllegalStateException("Los roles del equipo no están configurados correctamente");
-        }
-        Set<Member> uniqueMembers = new LinkedHashSet<>();
-        uniqueMembers.addAll(guild.getMembersWithRoles(staffRole));
-        uniqueMembers.addAll(guild.getMembersWithRoles(moderatorRole));
-        List<Member> staffMembers = uniqueMembers.stream()
-                .filter(member -> !member.getUser().isBot())
-                .sorted(Comparator.comparing(Member::getEffectiveName, String.CASE_INSENSITIVE_ORDER))
-                .limit(25)
-                .toList();
-        if (staffMembers.isEmpty()) {
-            throw new IllegalStateException("No hay administradores disponibles para la encuesta");
-        }
-        event.reply("⭐ <@" + ticket.openerId() + ">, selecciona el administrador que te atendió para valorar el servicio. "
-                        + "Al enviar la valoración, el ticket se cerrará automáticamente.")
-                .setComponents(panels.surveyStaffMenu(ticket.id(), staffMembers))
-                .queue();
+        event.deferReply().queue(hook -> guild.findMembers(member -> canAttend(ticket, member))
+                .onSuccess(members -> {
+                    List<Member> staffMembers = members.stream()
+                            .filter(member -> !member.getUser().isBot())
+                            .sorted(Comparator.comparing(Member::getEffectiveName, String.CASE_INSENSITIVE_ORDER))
+                            .limit(125)
+                            .toList();
+                    if (staffMembers.isEmpty()) {
+                        hook.editOriginal("❌ No hay administradores disponibles para esta categoría.").queue();
+                        return;
+                    }
+                    String suffix = members.size() > 125
+                            ? " Se muestran los primeros 125 miembros del equipo."
+                            : "";
+                    hook.editOriginal("⭐ <@" + ticket.openerId()
+                                    + ">, selecciona el administrador que te atendió. "
+                                    + "Al enviar la valoración, el ticket se cerrará automáticamente." + suffix)
+                            .setComponents(panels.surveyStaffMenus(ticket.id(), staffMembers))
+                            .queue();
+                })
+                .onError(error -> hook.editOriginal("❌ No se pudo cargar la lista del equipo: "
+                        + safeMessage(error)).queue()));
     }
 
     private void selectSurveyStaff(StringSelectInteractionEvent event) {
-        long ticketId = Long.parseLong(event.getComponentId().substring(PanelFactory.SURVEY_STAFF_PREFIX.length()));
+        String selector = event.getComponentId().substring(PanelFactory.SURVEY_STAFF_PREFIX.length());
+        long ticketId = Long.parseLong(selector.split(":", 2)[0]);
         long staffId = Long.parseUnsignedLong(event.getValues().getFirst());
         Ticket ticket = tickets.findById(ticketId)
                 .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
@@ -319,7 +287,7 @@ public final class TicketListener extends ListenerAdapter {
         }
         Guild guild = requireGuild(event.getGuild());
         Member selectedStaff = guild.getMemberById(staffId);
-        if (selectedStaff == null || !permissions.isStaff(selectedStaff)) {
+        if (selectedStaff != null && !canAttend(ticket, selectedStaff)) {
             event.reply("❌ El administrador seleccionado ya no pertenece al equipo.")
                     .setEphemeral(true).queue();
             return;
@@ -335,20 +303,6 @@ public final class TicketListener extends ListenerAdapter {
                                 "Cuéntanos cómo fue la atención recibida", 3, 1000, true))
                 .build();
         event.replyModal(modal).queue();
-    }
-
-    private void sendTranscriptPreview(ButtonInteractionEvent event) {
-        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
-        boolean allowed = permissions.isStaff(event.getMember()) || ticket.openerId() == event.getUser().getIdLong();
-        if (!allowed) {
-            event.reply("❌ No puedes generar esta transcripción.").setEphemeral(true).queue();
-            return;
-        }
-        event.deferReply(true).queue();
-        Path transcript = transcripts.generate(ticket);
-        event.getHook().sendMessage("📄 Transcripción actual del ticket #" + ticket.id())
-                .addFiles(FileUpload.fromData(transcript.toFile()))
-                .queue();
     }
 
     private void submitFeedback(ModalInteractionEvent event, String ticketAndStaff) {
@@ -369,145 +323,129 @@ public final class TicketListener extends ListenerAdapter {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
         }
-        Member selectedStaff = requireGuild(event.getGuild()).getMemberById(staffId);
-        if (selectedStaff == null || !permissions.isStaff(selectedStaff)) {
+        Guild guild = requireGuild(event.getGuild());
+        Member selectedStaff = guild.getMemberById(staffId);
+        if (selectedStaff != null && !canAttend(ticket, selectedStaff)) {
             event.reply("❌ El administrador seleccionado ya no pertenece al equipo.").setEphemeral(true).queue();
             return;
         }
-        event.deferReply(true).queue();
-        if (!tickets.saveFeedback(ticket.id(), event.getUser().getIdLong(), staffId,
-                attention, solution, comment)) {
-            event.getHook().editOriginal("⚠️ Esta encuesta ya fue respondida.").queue();
-            return;
-        }
+        event.deferReply(true).queue(hook -> {
+            String reason = "Cierre automático después de completar la valoración";
+            final Path transcript;
+            final List<CompletableFuture<Message>> uploads;
+            try {
+                transcript = transcripts.generate(ticket);
+                uploads = uploadClosureArchive(guild, ticket, staffId, attention, solution, comment,
+                        reason, transcript);
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ No se cerró el ticket: " + safeMessage(exception)
+                        + ". Puedes volver a enviar la encuesta.").queue();
+                return;
+            }
 
-        String reason = "Cierre automático después de completar la valoración";
-        Path transcript = transcripts.generate(ticket);
-        tickets.close(ticket.id(), staffId, reason, transcript.toString());
-        sendRatingLog(event.getGuild(), ticket, selectedStaff, attention, solution, comment);
-        sendClosedTicketLogs(event.getGuild(), ticket, staffId, reason, transcript);
-        event.getHook().editOriginal("✅ Gracias por tu valoración. El ticket se cerrará automáticamente.").queue();
-        if (event.getChannel() instanceof TextChannel channel) {
-            channel.sendMessage("⭐ Encuesta completada por <@" + ticket.openerId()
-                    + ">. Cerrando ticket…").queue();
-            if (config.deleteTicketChannelOnClose()) channel.delete().queueAfter(5, TimeUnit.SECONDS);
-        }
+            CompletableFuture.allOf(uploads.toArray(CompletableFuture[]::new))
+                    .whenComplete((unused, uploadError) -> {
+                        List<Message> archivedMessages = successfulMessages(uploads);
+                        if (uploadError != null) {
+                            deleteMessages(archivedMessages);
+                            hook.editOriginal("❌ No se cerró el ticket porque no fue posible guardar todos los logs: "
+                                    + safeMessage(rootCause(uploadError)) + ". El canal se conservará para reintentarlo.").queue();
+                            return;
+                        }
+                        try {
+                            boolean completed = tickets.completeFeedbackAndClose(ticket.id(), event.getUser().getIdLong(),
+                                    staffId, attention, solution, comment, reason, transcript.toString());
+                            if (!completed) {
+                                deleteMessages(archivedMessages);
+                                hook.editOriginal("⚠️ Este ticket ya fue cerrado o la encuesta ya fue procesada.").queue();
+                                return;
+                            }
+                        } catch (RuntimeException exception) {
+                            deleteMessages(archivedMessages);
+                            hook.editOriginal("❌ PostgreSQL no permitió cerrar el ticket: "
+                                    + safeMessage(exception) + ". El canal se conservará para reintentarlo.").queue();
+                            return;
+                        }
+
+                        hook.editOriginal("✅ Gracias por tu valoración. El ticket fue archivado correctamente.").queue();
+                        if (event.getChannel() instanceof TextChannel channel) {
+                            channel.sendMessage("⭐ Encuesta completada por <@" + ticket.openerId()
+                                    + ">. El ticket quedó archivado.").queue(null, ignored -> {});
+                            if (config.deleteTicketChannelOnClose()) {
+                                channel.delete().reason("Ticket archivado correctamente")
+                                        .queueAfter(5, TimeUnit.SECONDS, ignored -> { },
+                                                error -> hook.editOriginal("✅ El ticket fue archivado, pero Discord no permitió eliminar el canal: "
+                                                        + safeMessage(error)).queue());
+                            }
+                        }
+                    });
+        });
     }
 
-    private void sendRatingLog(Guild guild, Ticket ticket, Member selectedStaff,
-                               int attention, int solution, String comment) {
-        if (guild == null) return;
-        TextChannel ratings = guild.getTextChannelById(config.ticketRatingChannelId());
-        if (ratings == null) return;
-        ratings.sendMessageEmbeds(new EmbedBuilder()
+    private List<CompletableFuture<Message>> uploadClosureArchive(Guild guild, Ticket ticket, long attendedBy,
+                                                                   int attention, int solution, String comment,
+                                                                   String reason, Path transcript) {
+        TextChannel ratings = requireTextChannel(guild, config.ticketRatingChannelId(), "valoraciones");
+        TextChannel log = requireTextChannel(guild, config.ticketLogChannelId(), "logs de tickets");
+        TextChannel transcriptLog = requireTextChannel(guild, config.ticketTranscriptChannelId(), "transcripciones");
+        String openedAt = "<t:" + ticket.createdAt().toEpochSecond() + ":F>";
+        String claimedBy = ticket.claimedBy() == null ? "No reclamado" : "<@" + ticket.claimedBy() + ">";
+
+        List<CompletableFuture<Message>> uploads = new ArrayList<>();
+        uploads.add(ratings.sendMessageEmbeds(new EmbedBuilder()
                         .setColor(new Color(255, 193, 7))
                         .setTitle("⭐ Nueva valoración")
                         .addField("Usuario", "<@" + ticket.openerId() + ">", true)
                         .addField("Atención", attention + "/10", true)
                         .addField("Solución", solution + "/10", true)
                         .addField("Valoración", truncate(comment, 1000), false)
-                        .setFooter("Ticket #" + ticket.id() + " · Atendido por " + selectedStaff.getEffectiveName())
+                        .addField("Atendido por", "<@" + attendedBy + ">", false)
+                        .setFooter("Ticket #" + ticket.id())
                         .setTimestamp(OffsetDateTime.now())
                         .build())
-                .queue();
-    }
+                .submit());
 
-    private void addStrikeFromTicket(ModalInteractionEvent event, long ticketId) {
-        if (!permissions.isModerator(event.getMember())) {
-            event.reply("❌ No tienes permisos de Moderación.").setEphemeral(true).queue();
-            return;
-        }
-        Ticket ticket = tickets.findById(ticketId).orElseThrow(() -> new IllegalStateException("El ticket no existe"));
-        long targetId = parseDiscordId(value(event, "target-id"));
-        int points = parsePoints(value(event, "points"));
-        String reason = value(event, "reason");
-        String evidence = optionalValue(event, "strike-evidence");
-        long strikeId = strikes.add(ticket.guildId(), targetId, points, reason, evidence, ticket.id(), event.getUser().getIdLong());
-        int total = strikes.activePoints(ticket.guildId(), targetId);
-        moderation.log(ticket.guildId(), targetId, event.getUser().getIdLong(), "STRIKE", reason, null, ticket.id());
-        notifyStrike(event, targetId, strikeId, points, total, reason);
-        applyConfiguredThreshold(event.getGuild(), targetId, total, reason, ticket.id(), event.getUser().getIdLong());
-        event.reply("⚠️ Warn **#" + strikeId + "** añadido a <@" + targetId + ">. Total activo: **" + total + " puntos**.").queue();
-    }
-
-    private void openCloseModal(ButtonInteractionEvent event) {
-        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
-        boolean allowed = permissions.isStaff(event.getMember()) || ticket.openerId() == event.getUser().getIdLong();
-        if (!allowed) {
-            event.reply("❌ No puedes cerrar este ticket.").setEphemeral(true).queue();
-            return;
-        }
-        Modal modal = Modal.create(CLOSE_MODAL_PREFIX + ticket.id(), "Cerrar ticket")
-                .addComponents(label("Motivo del cierre", "close-reason", TextInputStyle.PARAGRAPH,
-                        "Describe brevemente cómo terminó el caso", 3, 1000, true))
-                .build();
-        event.replyModal(modal).queue();
-    }
-
-    private void closeTicket(ModalInteractionEvent event, long ticketId) {
-        Ticket ticket = tickets.findById(ticketId).orElseThrow(() -> new IllegalStateException("El ticket no existe"));
-        boolean allowed = permissions.isStaff(event.getMember()) || ticket.openerId() == event.getUser().getIdLong();
-        if (!allowed) {
-            event.reply("❌ No puedes cerrar este ticket.").setEphemeral(true).queue();
-            return;
-        }
-        event.deferReply(true).queue();
-        Path transcript = transcripts.generate(ticket);
-        String reason = value(event, "close-reason");
-        tickets.close(ticket.id(), event.getUser().getIdLong(), reason, transcript.toString());
-
-        sendClosedTicketLogs(event.getGuild(), ticket, event.getUser().getIdLong(), reason, transcript);
-        event.getHook().editOriginal("✅ Ticket cerrado. La transcripción fue generada.").queue();
-        if (event.getChannel() instanceof TextChannel channel) {
-            channel.sendMessage("🔒 Ticket cerrado por " + event.getUser().getAsMention() + ". Motivo: " + reason).queue();
-            if (config.deleteTicketChannelOnClose()) channel.delete().queueAfter(5, TimeUnit.SECONDS);
-        }
-    }
-
-    private void sendClosedTicketLogs(Guild guild, Ticket ticket, long generatedBy,
-                                      String reason, Path transcript) {
-        if (guild == null) return;
-        String openedAt = "<t:" + ticket.createdAt().toEpochSecond() + ":F>";
-        String claimedBy = ticket.claimedBy() == null ? "No reclamado" : "<@" + ticket.claimedBy() + ">";
-
-        TextChannel log = guild.getTextChannelById(config.ticketLogChannelId());
-        if (log != null) {
-            log.sendMessageEmbeds(new EmbedBuilder()
+        uploads.add(log.sendMessageEmbeds(new EmbedBuilder()
                             .setColor(new Color(87, 242, 135))
                             .setTitle("Ticket cerrado")
                             .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
                             .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
-                            .addField("⛔ Cerrado por", "<@" + generatedBy + ">", true)
+                            .addField("⛔ Cerrado por", "<@" + attendedBy + ">", true)
                             .addField("🕘 Fecha de apertura", openedAt, true)
                             .addField("🟣 Reclamado por", claimedBy, true)
                             .addField("❓ Motivo", truncate(reason, 1000), false)
                             .setTimestamp(OffsetDateTime.now())
                             .build())
-                    .queue();
-        }
+                .submit());
 
-        TextChannel transcriptLog = guild.getTextChannelById(config.ticketTranscriptChannelId());
-        if (transcriptLog == null) return;
-        transcriptLog.sendMessageEmbeds(new EmbedBuilder()
+        CompletableFuture<Message> transcriptUpload = transcriptLog.sendMessageEmbeds(new EmbedBuilder()
                         .setColor(new Color(87, 242, 135))
                         .setTitle("Copia archivada de transcripción")
                         .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
                         .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
-                        .addField("⛔ Generada por", "<@" + generatedBy + ">", true)
+                        .addField("⛔ Generada por", "<@" + attendedBy + ">", true)
                         .addField("🕘 Fecha de apertura", openedAt, true)
                         .addField("🟣 Reclamado por", claimedBy, true)
                         .addField("❓ Motivo", truncate(reason, 1000), false)
                         .setTimestamp(OffsetDateTime.now())
                         .build())
                 .addFiles(FileUpload.fromData(transcript.toFile()))
-                .queue(message -> {
-                    if (message.getAttachments().isEmpty()) return;
+                .submit()
+                .thenCompose(message -> {
+                    if (message.getAttachments().isEmpty()) {
+                        message.delete().queue(null, ignored -> {});
+                        return CompletableFuture.failedFuture(
+                                new IllegalStateException("Discord no devolvió el archivo de transcripción"));
+                    }
                     String transcriptUrl = message.getAttachments().getFirst().getUrl();
-                    message.editMessageComponents(ActionRow.of(
+                    return message.editMessageComponents(ActionRow.of(
                                     net.dv8tion.jda.api.components.buttons.Button.link(
                                             transcriptUrl, "Ver transcripción")))
-                            .queue();
+                            .submit()
+                            .exceptionally(ignored -> message);
                 });
+        uploads.add(transcriptUpload);
+        return uploads;
     }
 
     private void openAppealDecisionModal(ButtonInteractionEvent event) {
@@ -535,42 +473,33 @@ public final class TicketListener extends ListenerAdapter {
         boolean approved = "approve".equals(parts[0]);
         long ticketId = Long.parseLong(parts[1]);
         String reason = value(event, "decision-reason");
-        Ticket ticket = tickets.findById(ticketId).orElseThrow(() -> new IllegalStateException("La apelación no existe"));
-        if (!"OPEN".equals(ticket.status())) {
-            event.reply("⚠️ Esta apelación ya fue resuelta.").setEphemeral(true).queue();
-            return;
-        }
-        tickets.resolveAppeal(ticketId, event.getUser().getIdLong(), approved, reason);
-        String result = approved ? "APROBADA ✅" : "RECHAZADA ❌";
-        event.getJDA().retrieveUserById(ticket.openerId()).queue(user -> user.openPrivateChannel()
-                .flatMap(channel -> channel.sendMessage("⚖️ Tu apelación **#" + ticketId + "** fue **" + result + "**.\n**Motivo:** " + reason))
-                .queue(null, ignored -> {}));
-        event.reply("Apelación #" + ticketId + " " + result + ". El usuario fue notificado por privado.").queue();
-    }
-
-    private void notifyStrike(ModalInteractionEvent event, long targetId, long strikeId, int points, int total, String reason) {
-        event.getJDA().retrieveUserById(targetId).queue(user -> user.openPrivateChannel()
-                .flatMap(channel -> channel.sendMessage("⚠️ Has recibido un warn en **" + event.getGuild().getName() + "**.\n"
-                        + "**Warn:** #" + strikeId + " (" + points + " punto(s))\n"
-                        + "**Total activo:** " + total + "\n**Motivo:** " + reason
-                        + "\nSi consideras que es un error, usa el panel de apelaciones."))
-                .queue(null, ignored -> {}), ignored -> {});
-    }
-
-    private void applyConfiguredThreshold(Guild guild, long targetId, int total, String reason,
-                                          long ticketId, long moderatorId) {
-        if (!config.autoApplyStrikeSanctions() || guild == null) return;
-        if (total >= config.strikeBanThreshold()) {
-            guild.ban(UserSnowflake.fromId(targetId), 0, TimeUnit.SECONDS)
-                    .reason("Umbral de warns: " + reason)
-                    .queue(success -> moderation.log(guild.getIdLong(), targetId, moderatorId, "AUTO_BAN", reason, null, ticketId),
-                            ignored -> {});
-        } else if (total >= config.strikeMuteThreshold()) {
-            guild.retrieveMemberById(targetId).queue(member -> member.timeoutFor(Duration.ofHours(config.strikeMuteHours()))
-                    .reason("Umbral de warns: " + reason)
-                    .queue(success -> moderation.log(guild.getIdLong(), targetId, moderatorId, "AUTO_MUTE", reason,
-                            Duration.ofHours(config.strikeMuteHours()).toSeconds(), ticketId), ignored -> {}), ignored -> {});
-        }
+        event.deferReply(true).queue(hook -> {
+            try {
+                Ticket ticket = tickets.findById(ticketId)
+                        .orElseThrow(() -> new IllegalStateException("La apelación no existe"));
+                if (!"OPEN".equals(ticket.status())
+                        || !tickets.resolveAppeal(ticketId, event.getUser().getIdLong(), approved, reason)) {
+                    hook.editOriginal("⚠️ Esta apelación ya fue resuelta.").queue();
+                    return;
+                }
+                String result = approved ? "APROBADA ✅" : "RECHAZADA ❌";
+                event.getJDA().retrieveUserById(ticket.openerId()).submit()
+                        .thenCompose(user -> user.openPrivateChannel().submit())
+                        .thenCompose(channel -> channel.sendMessage("⚖️ Tu apelación **#" + ticketId
+                                + "** fue **" + result + "**.\n**Motivo:** " + reason).submit())
+                        .whenComplete((message, dmError) -> {
+                            if (dmError == null) {
+                                hook.editOriginal("✅ Apelación #" + ticketId + " " + result
+                                        + ". El usuario fue notificado por privado.").queue();
+                            } else {
+                                hook.editOriginal("✅ Apelación #" + ticketId + " " + result
+                                        + ", pero el usuario tiene los mensajes privados cerrados.").queue();
+                            }
+                        });
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ " + safeMessage(exception)).queue();
+            }
+        });
     }
 
     private Ticket requireChannelTicket(long channelId) {
@@ -582,12 +511,57 @@ public final class TicketListener extends ListenerAdapter {
         return guild;
     }
 
-    private void saveInitialLinks(long ticketId, long authorId, String evidence) {
+    private static List<String> extractLinks(String evidence) {
         Matcher matcher = URL_PATTERN.matcher(evidence == null ? "" : evidence);
         Set<String> links = new LinkedHashSet<>();
         while (matcher.find()) links.add(trimUrl(matcher.group()));
-        for (String link : links) {
-            tickets.saveAttachment(ticketId, null, authorId, "LINK", null, link, null, null, OffsetDateTime.now());
+        return List.copyOf(links);
+    }
+
+    private boolean canAttend(Ticket ticket, Member member) {
+        if (member == null || member.getUser().isBot()) return false;
+        if (member.hasPermission(Permission.ADMINISTRATOR)) return true;
+        long roleId = ticket.type() == TicketType.REPORT
+                ? config.moderatorRoleId()
+                : config.staffRoleId();
+        return member.getRoles().stream().anyMatch(role -> role.getIdLong() == roleId);
+    }
+
+    private static TextChannel requireTextChannel(Guild guild, long channelId, String purpose) {
+        TextChannel channel = guild.getTextChannelById(channelId);
+        if (channel == null) throw new IllegalStateException("No existe el canal configurado para " + purpose);
+        return channel;
+    }
+
+    private static List<Message> successfulMessages(List<CompletableFuture<Message>> uploads) {
+        List<Message> messages = new ArrayList<>();
+        for (CompletableFuture<Message> upload : uploads) {
+            if (upload.isDone() && !upload.isCompletedExceptionally() && !upload.isCancelled()) {
+                Message message = upload.getNow(null);
+                if (message != null) messages.add(message);
+            }
+        }
+        return messages;
+    }
+
+    private static void deleteMessages(List<Message> messages) {
+        for (Message message : messages) message.delete().queue(null, ignored -> {});
+    }
+
+    private static Throwable rootCause(Throwable error) {
+        Throwable current = error;
+        while ((current instanceof CompletionException || current.getClass().getSimpleName().equals("ExecutionException"))
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private void markFailedQuietly(long ticketId, String reason) {
+        try {
+            tickets.failOpen(ticketId, reason);
+        } catch (RuntimeException ignored) {
+            // Conservamos el error original que inició la limpieza.
         }
     }
 
@@ -606,16 +580,6 @@ public final class TicketListener extends ListenerAdapter {
         String digits = input.replaceAll("\\D", "");
         if (digits.length() < 15 || digits.length() > 20) throw new IllegalArgumentException("El ID de Discord no es válido");
         return Long.parseUnsignedLong(digits);
-    }
-
-    private static int parsePoints(String input) {
-        try {
-            int points = Integer.parseInt(input.trim());
-            if (points < 1 || points > 10) throw new NumberFormatException();
-            return points;
-        } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException("Los puntos deben estar entre 1 y 10");
-        }
     }
 
     private static int parseRating(String input) {

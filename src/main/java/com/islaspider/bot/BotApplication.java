@@ -13,8 +13,13 @@ import com.islaspider.bot.service.PermissionService;
 import com.islaspider.bot.service.TranscriptService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 
 import java.util.EnumSet;
@@ -42,7 +47,7 @@ public final class BotApplication {
                             GatewayIntent.GUILD_MEMBERS))
                     .setActivity(Activity.watching("tickets y moderación"))
                     .addEventListeners(
-                            new TicketListener(config, tickets, strikes, moderation, permissions, panels, transcripts),
+                            new TicketListener(config, tickets, permissions, panels, transcripts),
                             new MessageArchiveListener(config, tickets),
                             new ControlPanelListener(config, strikes, moderation, permissions, panels))
                     .build()
@@ -52,14 +57,20 @@ public final class BotApplication {
             throw exception;
         }
 
-        Guild guild = jda.getGuildById(config.guildId());
-        if (guild == null) {
+        final Guild guild;
+        try {
+            guild = jda.getGuildById(config.guildId());
+            if (guild == null) {
+                throw new IllegalStateException("El bot no se encuentra en el servidor configurado en GUILD_ID");
+            }
+            validateDiscordObjects(config, guild);
+            validateBotPermissions(config, guild);
+            CommandRegistry.register(guild);
+        } catch (RuntimeException exception) {
             jda.shutdownNow();
             database.close();
-            throw new IllegalStateException("El bot no se encuentra en el servidor configurado en GUILD_ID");
+            throw exception;
         }
-        validateDiscordObjects(config, guild);
-        CommandRegistry.register(guild);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             jda.shutdown();
@@ -93,6 +104,37 @@ public final class BotApplication {
         }
         if (guild.getRoleById(config.moderatorRoleId()) == null) {
             throw new IllegalStateException("MOD_ROLE_ID no corresponde a un rol del servidor");
+        }
+    }
+
+    private static void validateBotPermissions(BotConfig config, Guild guild) {
+        Member bot = guild.getSelfMember();
+        Category category = guild.getCategoryById(config.ticketCategoryId());
+        requirePermissions(bot, category, "la categoría de tickets",
+                Permission.VIEW_CHANNEL, Permission.MANAGE_CHANNEL);
+
+        requireLogPermissions(bot, guild.getTextChannelById(config.ticketLogChannelId()), "logs de tickets");
+        requireLogPermissions(bot, guild.getTextChannelById(config.ticketImageChannelId()), "imágenes de tickets");
+        requireLogPermissions(bot, guild.getTextChannelById(config.ticketTranscriptChannelId()), "transcripciones");
+        requireLogPermissions(bot, guild.getTextChannelById(config.ticketRatingChannelId()), "valoraciones");
+        requireLogPermissions(bot, guild.getTextChannelById(config.appealLogChannelId()), "apelaciones");
+
+        if (!bot.hasPermission(Permission.MODERATE_MEMBERS, Permission.KICK_MEMBERS, Permission.BAN_MEMBERS)) {
+            throw new IllegalStateException("Al bot le faltan permisos globales: Moderate Members, Kick Members o Ban Members");
+        }
+    }
+
+    private static void requireLogPermissions(Member bot, TextChannel channel, String purpose) {
+        requirePermissions(bot, channel, "el canal de " + purpose,
+                Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND,
+                Permission.MESSAGE_EMBED_LINKS, Permission.MESSAGE_ATTACH_FILES,
+                Permission.MESSAGE_HISTORY);
+    }
+
+    private static void requirePermissions(Member bot, GuildChannel channel, String location,
+                                           Permission... required) {
+        if (channel == null || !bot.hasPermission(channel, required)) {
+            throw new IllegalStateException("Al bot le faltan permisos necesarios en " + location);
         }
     }
 }

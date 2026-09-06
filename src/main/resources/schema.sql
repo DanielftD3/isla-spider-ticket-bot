@@ -23,9 +23,25 @@ CREATE TABLE IF NOT EXISTS tickets (
 -- pero deja de ser obligatoria y los tickets nuevos usan game_name.
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS steam_id VARCHAR(100);
 ALTER TABLE tickets ALTER COLUMN steam_id DROP NOT NULL;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS game_name VARCHAR(100);
+UPDATE tickets SET game_name=COALESCE(NULLIF(game_name, ''), NULLIF(steam_id, ''), 'Sin nombre') WHERE game_name IS NULL OR game_name='';
+ALTER TABLE tickets ALTER COLUMN game_name SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_tickets_channel ON tickets(channel_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_opener_status ON tickets(guild_id, opener_id, status);
+WITH duplicate_open AS (
+    SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY guild_id, opener_id, type ORDER BY created_at, id
+    ) AS position
+    FROM tickets
+    WHERE status='OPEN'
+)
+UPDATE tickets
+SET status='FAILED', closed_at=NOW(),
+    close_reason=COALESCE(close_reason, 'Duplicado cerrado durante la migración')
+WHERE id IN (SELECT id FROM duplicate_open WHERE position > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tickets_open_per_type
+    ON tickets(guild_id, opener_id, type) WHERE status='OPEN';
 
 CREATE TABLE IF NOT EXISTS ticket_messages (
     id BIGSERIAL PRIMARY KEY,
@@ -49,6 +65,9 @@ CREATE TABLE IF NOT EXISTS ticket_attachments (
     size_bytes BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ticket_attachments_ticket ON ticket_attachments(ticket_id, message_id, created_at);
 
 CREATE TABLE IF NOT EXISTS strikes (
     id BIGSERIAL PRIMARY KEY,

@@ -23,29 +23,48 @@ public final class TicketRepository {
     }
 
     public long create(long guildId, Long channelId, long openerId, TicketType type, String gameName,
-                       String subject, String description, Long accusedUserId, String evidence) {
+                       String subject, String description, Long accusedUserId, String evidence,
+                       List<String> initialLinks) {
         String sql = """
                 INSERT INTO tickets
                     (guild_id, channel_id, opener_id, type, game_name, subject, description, accused_user_id, evidence)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
-        try (Connection connection = database.connection();
-             PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-            statement.setLong(1, guildId);
-            if (channelId == null) statement.setNull(2, java.sql.Types.BIGINT); else statement.setLong(2, channelId);
-            statement.setLong(3, openerId);
-            statement.setString(4, type.name());
-            statement.setString(5, gameName);
-            statement.setString(6, subject);
-            statement.setString(7, description);
-            if (accusedUserId == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, accusedUserId);
-            statement.setString(9, blankToNull(evidence));
-            statement.executeUpdate();
-            try (ResultSet keys = statement.getGeneratedKeys()) {
-                if (keys.next()) return keys.getLong(1);
+        try (Connection connection = database.connection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+                statement.setLong(1, guildId);
+                if (channelId == null) statement.setNull(2, java.sql.Types.BIGINT); else statement.setLong(2, channelId);
+                statement.setLong(3, openerId);
+                statement.setString(4, type.name());
+                statement.setString(5, gameName);
+                statement.setString(6, subject);
+                statement.setString(7, description);
+                if (accusedUserId == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, accusedUserId);
+                statement.setString(9, blankToNull(evidence));
+                statement.executeUpdate();
+                long ticketId;
+                try (ResultSet keys = statement.getGeneratedKeys()) {
+                    if (!keys.next()) throw new SQLException("PostgreSQL no devolvio el ID del ticket");
+                    ticketId = keys.getLong(1);
+                }
+                OffsetDateTime createdAt = OffsetDateTime.now();
+                if (initialLinks != null) {
+                    for (String link : initialLinks.stream().filter(value -> value != null && !value.isBlank()).distinct().toList()) {
+                        insertAttachment(connection, ticketId, null, openerId, "LINK", null,
+                                link, null, null, createdAt);
+                    }
+                }
+                connection.commit();
+                return ticketId;
+            } catch (SQLException exception) {
+                rollback(connection, exception);
+                throw exception;
             }
-            throw new SQLException("PostgreSQL no devolvio el ID del ticket");
         } catch (SQLException exception) {
+            if ("23505".equals(exception.getSQLState())) {
+                throw new IllegalStateException("Ya tienes un ticket abierto de esta categoría", exception);
+            }
             throw new IllegalStateException("No se pudo guardar el ticket", exception);
         }
     }
@@ -83,35 +102,7 @@ public final class TicketRepository {
         }
     }
 
-    public boolean claim(long ticketId, long moderatorId) {
-        String sql = "UPDATE tickets SET claimed_by=? WHERE id=? AND status='OPEN' AND claimed_by IS NULL";
-        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, moderatorId);
-            statement.setLong(2, ticketId);
-            return statement.executeUpdate() == 1;
-        } catch (SQLException exception) {
-            throw new IllegalStateException("No se pudo reclamar el ticket", exception);
-        }
-    }
-
-    public void close(long ticketId, long moderatorId, String reason, String transcriptPath) {
-        String sql = """
-                UPDATE tickets
-                   SET status='CLOSED', closed_at=NOW(), closed_by=?, close_reason=?, transcript_path=?
-                 WHERE id=? AND status='OPEN'
-                """;
-        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, moderatorId);
-            statement.setString(2, reason);
-            statement.setString(3, transcriptPath);
-            statement.setLong(4, ticketId);
-            statement.executeUpdate();
-        } catch (SQLException exception) {
-            throw new IllegalStateException("No se pudo cerrar el ticket", exception);
-        }
-    }
-
-    public void resolveAppeal(long ticketId, long moderatorId, boolean approved, String reason) {
+    public boolean resolveAppeal(long ticketId, long moderatorId, boolean approved, String reason) {
         String status = approved ? "APPROVED" : "REJECTED";
         String sql = """
                 UPDATE tickets
@@ -123,31 +114,75 @@ public final class TicketRepository {
             statement.setLong(2, moderatorId);
             statement.setString(3, reason);
             statement.setLong(4, ticketId);
-            statement.executeUpdate();
+            return statement.executeUpdate() == 1;
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo resolver la apelacion", exception);
         }
     }
 
-    public boolean saveFeedback(long ticketId, long userId, long attendedBy,
-                                int attentionRating, int solutionRating, String comment) {
-        String sql = """
+    public boolean completeFeedbackAndClose(long ticketId, long userId, long attendedBy,
+                                            int attentionRating, int solutionRating, String comment,
+                                            String reason, String transcriptPath) {
+        String closeSql = """
+                UPDATE tickets
+                   SET status='CLOSED', closed_at=NOW(), closed_by=?, close_reason=?, transcript_path=?
+                 WHERE id=? AND status='OPEN'
+                """;
+        String feedbackSql = """
                 INSERT INTO ticket_feedback
                     (ticket_id, user_id, attended_by, attention_rating, solution_rating, comment)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (ticket_id) DO NOTHING
+                ON CONFLICT (ticket_id) DO UPDATE SET
+                    user_id=EXCLUDED.user_id,
+                    attended_by=EXCLUDED.attended_by,
+                    attention_rating=EXCLUDED.attention_rating,
+                    solution_rating=EXCLUDED.solution_rating,
+                    comment=EXCLUDED.comment,
+                    created_at=NOW()
                 """;
-        try (Connection connection = database.connection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, ticketId);
-            statement.setLong(2, userId);
-            statement.setLong(3, attendedBy);
-            statement.setInt(4, attentionRating);
-            statement.setInt(5, solutionRating);
-            statement.setString(6, comment);
+        try (Connection connection = database.connection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement close = connection.prepareStatement(closeSql);
+                 PreparedStatement feedback = connection.prepareStatement(feedbackSql)) {
+                close.setLong(1, attendedBy);
+                close.setString(2, reason);
+                close.setString(3, transcriptPath);
+                close.setLong(4, ticketId);
+                if (close.executeUpdate() != 1) {
+                    connection.rollback();
+                    return false;
+                }
+
+                feedback.setLong(1, ticketId);
+                feedback.setLong(2, userId);
+                feedback.setLong(3, attendedBy);
+                feedback.setInt(4, attentionRating);
+                feedback.setInt(5, solutionRating);
+                feedback.setString(6, comment);
+                feedback.executeUpdate();
+                connection.commit();
+                return true;
+            } catch (SQLException exception) {
+                rollback(connection, exception);
+                throw exception;
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudo guardar la valoración y cerrar el ticket", exception);
+        }
+    }
+
+    public boolean failOpen(long ticketId, String reason) {
+        String sql = """
+                UPDATE tickets
+                   SET status='FAILED', closed_at=NOW(), close_reason=?
+                 WHERE id=? AND status='OPEN'
+                """;
+        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, reason);
+            statement.setLong(2, ticketId);
             return statement.executeUpdate() == 1;
         } catch (SQLException exception) {
-            throw new IllegalStateException("No se pudo guardar la valoración", exception);
+            throw new IllegalStateException("No se pudo cancelar el ticket incompleto", exception);
         }
     }
 
@@ -173,22 +208,9 @@ public final class TicketRepository {
 
     public void saveAttachment(long ticketId, Long messageId, long authorId, String kind, String fileName,
                                String url, String contentType, Long sizeBytes, OffsetDateTime createdAt) {
-        String sql = """
-                INSERT INTO ticket_attachments
-                    (ticket_id, message_id, author_id, kind, file_name, url, content_type, size_bytes, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, ticketId);
-            if (messageId == null) statement.setNull(2, java.sql.Types.BIGINT); else statement.setLong(2, messageId);
-            statement.setLong(3, authorId);
-            statement.setString(4, kind);
-            statement.setString(5, blankToNull(fileName));
-            statement.setString(6, url);
-            statement.setString(7, blankToNull(contentType));
-            if (sizeBytes == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, sizeBytes);
-            statement.setObject(9, createdAt);
-            statement.executeUpdate();
+        try (Connection connection = database.connection()) {
+            insertAttachment(connection, ticketId, messageId, authorId, kind, fileName,
+                    url, contentType, sizeBytes, createdAt);
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo registrar un archivo o enlace", exception);
         }
@@ -241,6 +263,36 @@ public final class TicketRepository {
                 result.getObject("accused_user_id", Long.class), result.getString("evidence"),
                 result.getString("status"), result.getObject("claimed_by", Long.class),
                 result.getObject("created_at", OffsetDateTime.class));
+    }
+
+    private static void insertAttachment(Connection connection, long ticketId, Long messageId, long authorId,
+                                         String kind, String fileName, String url, String contentType,
+                                         Long sizeBytes, OffsetDateTime createdAt) throws SQLException {
+        String sql = """
+                INSERT INTO ticket_attachments
+                    (ticket_id, message_id, author_id, kind, file_name, url, content_type, size_bytes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, ticketId);
+            if (messageId == null) statement.setNull(2, java.sql.Types.BIGINT); else statement.setLong(2, messageId);
+            statement.setLong(3, authorId);
+            statement.setString(4, kind);
+            statement.setString(5, blankToNull(fileName));
+            statement.setString(6, url);
+            statement.setString(7, blankToNull(contentType));
+            if (sizeBytes == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, sizeBytes);
+            statement.setObject(9, createdAt);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void rollback(Connection connection, SQLException original) {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackError) {
+            original.addSuppressed(rollbackError);
+        }
     }
 
     private static String blankToNull(String value) {

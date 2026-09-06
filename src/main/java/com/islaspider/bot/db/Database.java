@@ -43,11 +43,20 @@ public final class Database implements AutoCloseable {
             throw new IllegalStateException("No se pudo leer schema.sql", exception);
         }
 
-        try (Connection connection = connection(); Statement statement = connection.createStatement()) {
-            for (String block : sql.split(";")) {
-                if (!block.isBlank()) {
-                    statement.execute(block);
+        try (Connection connection = connection()) {
+            connection.setAutoCommit(false);
+            try (Statement statement = connection.createStatement()) {
+                for (String block : sql.split(";")) {
+                    if (!block.isBlank()) statement.execute(block);
                 }
+                connection.commit();
+            } catch (SQLException exception) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollbackError) {
+                    exception.addSuppressed(rollbackError);
+                }
+                throw exception;
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo inicializar el esquema de PostgreSQL", exception);
@@ -59,4 +68,3 @@ public final class Database implements AutoCloseable {
         dataSource.close();
     }
 }
-

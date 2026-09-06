@@ -12,6 +12,6 @@ public final class CommandRegistry {
         guild.updateCommands()
                 .addCommands(Commands.slash("setup", "Abre el asistente de configuración del bot")
                         .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR)))
-                .queue();
+                .complete();
     }
 }

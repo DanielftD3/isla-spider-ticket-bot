@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public final class ControlPanelListener extends ListenerAdapter {
@@ -234,65 +235,87 @@ public final class ControlPanelListener extends ListenerAdapter {
         int points = parseInteger(value(event, "points"), 1, 10, "Los puntos deben estar entre 1 y 10");
         String reason = value(event, "reason");
         String evidence = optionalValue(event, "evidence");
-
-        long strikeId = strikes.add(guild.getIdLong(), targetId, points, reason, evidence,
-                null, event.getUser().getIdLong());
-        int total = strikes.activePoints(guild.getIdLong(), targetId);
-        moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
-                "STRIKE", reason, null, null);
-        notifyUser(event, targetId, "⚠️ Has recibido el warn **#" + strikeId + "** en **" + guild.getName()
-                + "**.\n**Puntos:** " + points + "\n**Total activo:** " + total + "\n**Motivo:** " + reason
-                + "\nPuedes apelar desde el panel de soporte.");
-        applyConfiguredThreshold(guild, targetId, total, reason, event.getUser().getIdLong());
-        event.reply("✅ Warn **#" + strikeId + "** añadido a <@" + targetId
-                + ">. Total activo: **" + total + " punto(s)**.").setEphemeral(true).queue();
+        event.deferReply(true).queue(hook -> {
+            try {
+                StrikeRepository.AddedStrike added = strikes.addWithAudit(guild.getIdLong(), targetId, points,
+                        reason, evidence, null, event.getUser().getIdLong());
+                notifyUser(event, targetId, "⚠️ Has recibido el warn **#" + added.id() + "** en **" + guild.getName()
+                        + "**.\n**Puntos:** " + points + "\n**Total activo:** " + added.activePoints()
+                        + "\n**Motivo:** " + reason + "\nPuedes apelar desde el panel de soporte.");
+                applyConfiguredThreshold(guild, targetId, added.activePoints(), reason, event.getUser().getIdLong());
+                hook.editOriginal("✅ Warn **#" + added.id() + "** añadido a <@" + targetId
+                        + ">. Total activo: **" + added.activePoints() + " punto(s)**.").queue();
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ " + safeMessage(exception)).queue();
+            }
+        });
     }
 
     private void removeWarn(ModalInteractionEvent event) {
         long strikeId = parseLong(value(event, "strike-id"), "El ID del warn no es válido");
         String reason = value(event, "reason");
-        boolean removed = strikes.revoke(event.getGuild().getIdLong(), strikeId,
-                event.getUser().getIdLong(), reason);
-        event.reply(removed ? "✅ Warn #" + strikeId + " retirado."
-                : "⚠️ Ese warn no existe o ya estaba retirado.").setEphemeral(true).queue();
+        event.deferReply(true).queue(hook -> {
+            try {
+                boolean removed = strikes.revoke(event.getGuild().getIdLong(), strikeId,
+                        event.getUser().getIdLong(), reason);
+                hook.editOriginal(removed ? "✅ Warn #" + strikeId + " retirado."
+                        : "⚠️ Ese warn no existe o ya estaba retirado.").queue();
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ " + safeMessage(exception)).queue();
+            }
+        });
     }
 
     private void reviewWarns(ModalInteractionEvent event) {
         long targetId = parseDiscordId(value(event, "target-id"));
-        List<Strike> active = strikes.listActive(event.getGuild().getIdLong(), targetId);
-        int total = active.stream().mapToInt(Strike::points).sum();
-        StringBuilder description = new StringBuilder();
-        for (Strike strike : active) {
-            description.append("**#").append(strike.id()).append(" · ")
-                    .append(strike.points()).append(" punto(s)**\n")
-                    .append(strike.reason()).append("\nModerador: <@")
-                    .append(strike.moderatorId()).append(">");
-            if (strike.sourceTicketId() != null) description.append(" · Ticket #").append(strike.sourceTicketId());
-            if (strike.evidenceUrl() != null && !strike.evidenceUrl().isBlank()) {
-                description.append("\n[Evidencia](").append(strike.evidenceUrl()).append(")");
+        event.deferReply(true).queue(hook -> {
+            try {
+                List<Strike> active = strikes.listActive(event.getGuild().getIdLong(), targetId);
+                int total = active.stream().mapToInt(Strike::points).sum();
+                StringBuilder description = new StringBuilder();
+                for (Strike strike : active) {
+                    description.append("**#").append(strike.id()).append(" · ")
+                            .append(strike.points()).append(" punto(s)**\n")
+                            .append(strike.reason()).append("\nModerador: <@")
+                            .append(strike.moderatorId()).append(">");
+                    if (strike.sourceTicketId() != null) description.append(" · Ticket #").append(strike.sourceTicketId());
+                    if (strike.evidenceUrl() != null && !strike.evidenceUrl().isBlank()) {
+                        description.append("\n[Evidencia](").append(strike.evidenceUrl()).append(")");
+                    }
+                    description.append("\n\n");
+                }
+                if (description.isEmpty()) description.append("Este usuario no tiene warns activos.");
+                hook.editOriginalEmbeds(new EmbedBuilder()
+                                .setColor(new Color(245, 166, 35))
+                                .setTitle("Warns activos de " + targetId)
+                                .setDescription(truncate(description.toString(), 4000))
+                                .setFooter("Total activo: " + total + " punto(s)")
+                                .build())
+                        .queue();
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ " + safeMessage(exception)).queue();
             }
-            description.append("\n\n");
-        }
-        if (description.isEmpty()) description.append("Este usuario no tiene warns activos.");
-        event.replyEmbeds(new EmbedBuilder()
-                        .setColor(new Color(245, 166, 35))
-                        .setTitle("Warns activos de " + targetId)
-                        .setDescription(truncate(description.toString(), 4000))
-                        .setFooter("Total activo: " + total + " punto(s)")
-                        .build())
-                .setEphemeral(true).queue();
+        });
     }
 
     private void sendInformativeWarn(ModalInteractionEvent event) {
         long targetId = parseDiscordId(value(event, "target-id"));
         String reason = value(event, "reason");
         Guild guild = event.getGuild();
-        moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
-                "WARN", reason, null, null);
-        notifyUser(event, targetId, "📢 Has recibido una advertencia en **" + guild.getName()
-                + "**.\n**Motivo:** " + reason + "\nEsta advertencia no suma puntos.");
-        event.reply("📢 Advertencia enviada a <@" + targetId + ">. No suma puntos.")
-                .setEphemeral(true).queue();
+        event.deferReply(true).queue(hook -> {
+            try {
+                moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
+                        "WARN", reason, null, null);
+                notifyUser(event, targetId, "📢 Has recibido una advertencia en **" + guild.getName()
+                        + "**.\n**Motivo:** " + reason + "\nEsta advertencia no suma puntos.")
+                        .whenComplete((unused, dmError) -> hook.editOriginal(dmError == null
+                                ? "📢 Advertencia enviada a <@" + targetId + ">. No suma puntos."
+                                : "📢 Advertencia registrada, pero <@" + targetId
+                                + "> tiene los mensajes privados cerrados.").queue());
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ " + safeMessage(exception)).queue();
+            }
+        });
     }
 
     private void mute(ModalInteractionEvent event) {
@@ -306,11 +329,16 @@ public final class ControlPanelListener extends ListenerAdapter {
             try {
                 requireInteraction(event.getMember(), target);
                 target.timeoutFor(Duration.ofMinutes(minutes)).reason(reason).queue(success -> {
-                    moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
-                            "MUTE", reason, Duration.ofMinutes(minutes).toSeconds(), null);
-                    notifyUser(event, targetId, "🔇 Has recibido un mute de **" + minutes + " minutos** en **"
-                            + guild.getName() + "**.\n**Motivo:** " + reason);
-                    event.getHook().editOriginal("✅ <@" + targetId + "> silenciado por " + minutes + " minutos.").queue();
+                    try {
+                        moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
+                                "MUTE", reason, Duration.ofMinutes(minutes).toSeconds(), null);
+                        notifyUser(event, targetId, "🔇 Has recibido un mute de **" + minutes + " minutos** en **"
+                                + guild.getName() + "**.\n**Motivo:** " + reason);
+                        event.getHook().editOriginal("✅ <@" + targetId + "> silenciado por " + minutes + " minutos.").queue();
+                    } catch (RuntimeException exception) {
+                        event.getHook().editOriginal("⚠️ El mute se aplicó, pero no pudo guardarse el registro: "
+                                + safeMessage(exception)).queue();
+                    }
                 }, error -> event.getHook().editOriginal("❌ No se pudo aplicar el mute: " + error.getMessage()).queue());
             } catch (RuntimeException exception) {
                 event.getHook().editOriginal("❌ " + safeMessage(exception)).queue();
@@ -327,12 +355,18 @@ public final class ControlPanelListener extends ListenerAdapter {
             try {
                 requireInteraction(event.getMember(), target);
                 notifyUser(event, targetId, "👢 Has sido expulsado de **" + guild.getName()
-                        + "**.\n**Motivo:** " + reason);
-                target.kick().reason(reason).queue(success -> {
-                    moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
-                            "KICK", reason, null, null);
-                    event.getHook().editOriginal("✅ <@" + targetId + "> fue expulsado.").queue();
-                }, error -> event.getHook().editOriginal("❌ No se pudo expulsar: " + error.getMessage()).queue());
+                        + "**.\n**Motivo:** " + reason)
+                        .handle((unused, ignored) -> null)
+                        .thenRun(() -> target.kick().reason(reason).queue(success -> {
+                            try {
+                                moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
+                                        "KICK", reason, null, null);
+                                event.getHook().editOriginal("✅ <@" + targetId + "> fue expulsado.").queue();
+                            } catch (RuntimeException exception) {
+                                event.getHook().editOriginal("⚠️ El usuario fue expulsado, pero falló el registro: "
+                                        + safeMessage(exception)).queue();
+                            }
+                        }, error -> event.getHook().editOriginal("❌ No se pudo expulsar: " + error.getMessage()).queue()));
             } catch (RuntimeException exception) {
                 event.getHook().editOriginal("❌ " + safeMessage(exception)).queue();
             }
@@ -347,12 +381,19 @@ public final class ControlPanelListener extends ListenerAdapter {
         if (cached != null) requireInteraction(event.getMember(), cached);
         event.deferReply(true).queue();
         notifyUser(event, targetId, "🔨 Has sido baneado de **" + guild.getName()
-                + "**.\n**Motivo:** " + reason);
-        guild.ban(UserSnowflake.fromId(targetId), 0, TimeUnit.SECONDS).reason(reason).queue(success -> {
-            moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
-                    "BAN", reason, null, null);
-            event.getHook().editOriginal("✅ <@" + targetId + "> fue baneado.").queue();
-        }, error -> event.getHook().editOriginal("❌ No se pudo banear: " + error.getMessage()).queue());
+                + "**.\n**Motivo:** " + reason)
+                .handle((unused, ignored) -> null)
+                .thenRun(() -> guild.ban(UserSnowflake.fromId(targetId), 0, TimeUnit.SECONDS).reason(reason)
+                        .queue(success -> {
+                            try {
+                                moderation.log(guild.getIdLong(), targetId, event.getUser().getIdLong(),
+                                        "BAN", reason, null, null);
+                                event.getHook().editOriginal("✅ <@" + targetId + "> fue baneado.").queue();
+                            } catch (RuntimeException exception) {
+                                event.getHook().editOriginal("⚠️ El usuario fue baneado, pero falló el registro: "
+                                        + safeMessage(exception)).queue();
+                            }
+                        }, error -> event.getHook().editOriginal("❌ No se pudo banear: " + error.getMessage()).queue()));
     }
 
     private void showSanctionedUsers(ButtonInteractionEvent event) {
@@ -383,17 +424,21 @@ public final class ControlPanelListener extends ListenerAdapter {
             event.reply("❌ No se encontró el rol de Moderación configurado.").setEphemeral(true).queue();
             return;
         }
-        String users = event.getGuild().getMembers().stream()
-                .filter(member -> member.getRoles().contains(role))
-                .limit(40)
-                .map(Member::getAsMention)
-                .reduce((left, right) -> left + "\n" + right)
-                .orElse("No hay usuarios con este rol.");
-        event.replyEmbeds(new EmbedBuilder().setColor(new Color(88, 101, 242))
-                        .setTitle("🛡️ Usuarios de " + role.getName())
-                        .setDescription(users)
-                        .build())
-                .setEphemeral(true).queue();
+        event.deferReply(true).queue(hook -> event.getGuild().findMembersWithRoles(role)
+                .onSuccess(members -> {
+                    String users = members.stream()
+                            .limit(40)
+                            .map(Member::getAsMention)
+                            .reduce((left, right) -> left + "\n" + right)
+                            .orElse("No hay usuarios con este rol.");
+                    hook.editOriginalEmbeds(new EmbedBuilder().setColor(new Color(88, 101, 242))
+                                    .setTitle("🛡️ Usuarios de " + role.getName())
+                                    .setDescription(users)
+                                    .build())
+                            .queue();
+                })
+                .onError(error -> hook.editOriginal("❌ No se pudo consultar el rol: "
+                        + safeMessage(error)).queue()));
     }
 
     private void applyConfiguredThreshold(Guild guild, long targetId, int total, String reason, long moderatorId) {
@@ -413,9 +458,11 @@ public final class ControlPanelListener extends ListenerAdapter {
         }
     }
 
-    private void notifyUser(ModalInteractionEvent event, long userId, String message) {
-        event.getJDA().retrieveUserById(userId).queue(user -> user.openPrivateChannel()
-                .flatMap(channel -> channel.sendMessage(message)).queue(null, ignored -> {}), ignored -> {});
+    private CompletableFuture<Void> notifyUser(ModalInteractionEvent event, long userId, String message) {
+        return event.getJDA().retrieveUserById(userId).submit()
+                .thenCompose(user -> user.openPrivateChannel().submit())
+                .thenCompose(channel -> channel.sendMessage(message).submit())
+                .thenApply(sent -> null);
     }
 
     private void requireModerator(Member member) {

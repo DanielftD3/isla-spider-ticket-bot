@@ -13,32 +13,65 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class StrikeRepository {
+    public record AddedStrike(long id, int activePoints) {}
+
     private final Database database;
 
     public StrikeRepository(Database database) {
         this.database = database;
     }
 
-    public long add(long guildId, long userId, int points, String reason, String evidence,
-                    Long sourceTicketId, long moderatorId) {
-        String sql = """
+    public AddedStrike addWithAudit(long guildId, long userId, int points, String reason, String evidence,
+                                    Long sourceTicketId, long moderatorId) {
+        String strikeSql = """
                 INSERT INTO strikes(guild_id, user_id, points, reason, evidence_url, source_ticket_id, moderator_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """;
-        try (Connection connection = database.connection();
-             PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-            statement.setLong(1, guildId);
-            statement.setLong(2, userId);
-            statement.setInt(3, points);
-            statement.setString(4, reason);
-            statement.setString(5, blankToNull(evidence));
-            if (sourceTicketId == null) statement.setNull(6, java.sql.Types.BIGINT); else statement.setLong(6, sourceTicketId);
-            statement.setLong(7, moderatorId);
-            statement.executeUpdate();
-            try (ResultSet keys = statement.getGeneratedKeys()) {
-                if (keys.next()) return keys.getLong(1);
+        String auditSql = """
+                INSERT INTO moderation_actions
+                    (guild_id, target_user_id, moderator_id, action, reason, duration_seconds, source_ticket_id)
+                VALUES (?, ?, ?, 'STRIKE', ?, NULL, ?)
+                """;
+        String totalSql = "SELECT COALESCE(SUM(points), 0) FROM strikes WHERE guild_id=? AND user_id=? AND active=true";
+        try (Connection connection = database.connection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement strike = connection.prepareStatement(strikeSql, Statement.RETURN_GENERATED_KEYS);
+                 PreparedStatement audit = connection.prepareStatement(auditSql);
+                 PreparedStatement total = connection.prepareStatement(totalSql)) {
+                strike.setLong(1, guildId);
+                strike.setLong(2, userId);
+                strike.setInt(3, points);
+                strike.setString(4, reason);
+                strike.setString(5, blankToNull(evidence));
+                if (sourceTicketId == null) strike.setNull(6, java.sql.Types.BIGINT); else strike.setLong(6, sourceTicketId);
+                strike.setLong(7, moderatorId);
+                strike.executeUpdate();
+                long strikeId;
+                try (ResultSet keys = strike.getGeneratedKeys()) {
+                    if (!keys.next()) throw new SQLException("PostgreSQL no devolvio el ID del strike");
+                    strikeId = keys.getLong(1);
+                }
+
+                audit.setLong(1, guildId);
+                audit.setLong(2, userId);
+                audit.setLong(3, moderatorId);
+                audit.setString(4, reason);
+                if (sourceTicketId == null) audit.setNull(5, java.sql.Types.BIGINT); else audit.setLong(5, sourceTicketId);
+                audit.executeUpdate();
+
+                total.setLong(1, guildId);
+                total.setLong(2, userId);
+                int activePoints;
+                try (ResultSet result = total.executeQuery()) {
+                    result.next();
+                    activePoints = result.getInt(1);
+                }
+                connection.commit();
+                return new AddedStrike(strikeId, activePoints);
+            } catch (SQLException exception) {
+                rollback(connection, exception);
+                throw exception;
             }
-            throw new SQLException("PostgreSQL no devolvio el ID del strike");
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo registrar el strike", exception);
         }
@@ -62,20 +95,6 @@ public final class StrikeRepository {
             return strikes;
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudieron consultar los strikes", exception);
-        }
-    }
-
-    public int activePoints(long guildId, long userId) {
-        String sql = "SELECT COALESCE(SUM(points), 0) FROM strikes WHERE guild_id=? AND user_id=? AND active=true";
-        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, guildId);
-            statement.setLong(2, userId);
-            try (ResultSet result = statement.executeQuery()) {
-                result.next();
-                return result.getInt(1);
-            }
-        } catch (SQLException exception) {
-            throw new IllegalStateException("No se pudo calcular el total de strikes", exception);
         }
     }
 
@@ -144,5 +163,13 @@ public final class StrikeRepository {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static void rollback(Connection connection, SQLException original) {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackError) {
+            original.addSuppressed(rollbackError);
+        }
     }
 }

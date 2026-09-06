@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public record BotConfig(
@@ -22,8 +21,6 @@ public record BotConfig(
         String databaseUser,
         String databasePassword,
         int databasePoolSize,
-        String botName,
-        String panelImageUrl,
         Path transcriptDirectory,
         boolean deleteTicketChannelOnClose,
         int strikeMuteThreshold,
@@ -64,8 +61,6 @@ public record BotConfig(
                 required(values, "DB_USER"),
                 required(values, "DB_PASSWORD"),
                 integer(values, "DB_POOL_SIZE", 8),
-                values.getOrDefault("BOT_NAME", "ISLA SPIDER - SOPORTE"),
-                values.getOrDefault("PANEL_IMAGE_URL", "").trim(),
                 Path.of(values.getOrDefault("TRANSCRIPT_DIR", "transcripts")),
                 bool(values, "DELETE_TICKET_CHANNEL_ON_CLOSE", true),
                 integer(values, "STRIKE_MUTE_THRESHOLD", 3),
