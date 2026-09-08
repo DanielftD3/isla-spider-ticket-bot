@@ -44,7 +44,10 @@ public record BotConfig(
         Map<String, String> values = new HashMap<>();
         loadDotEnv(Path.of(".env"), values);
         values.putAll(System.getenv());
+        return from(values);
+    }
 
+    static BotConfig from(Map<String, String> values) {
         long ticketLogChannelId = requiredId(values, "TICKET_LOG_CHANNEL_ID");
         return new BotConfig(
                 required(values, "DISCORD_TOKEN"),
