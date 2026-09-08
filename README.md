@@ -1,140 +1,112 @@
 # Isla Spider Ticket Bot
 
-A Java Discord bot for private support tickets, ticket ratings, HTML transcripts, appeals by direct message, and strike-based moderation. It uses JDA 6 and PostgreSQL and is designed to run on Windows Server.
+A Java Discord bot for private support tickets, ticket ratings, HTML transcripts, appeals, and strike-based moderation.
 
-The only slash command is `/setup`. All daily actions use buttons, select menus, and forms.
+> This README contains developer documentation only. Bot configuration and deployment are managed separately.
 
-## Features
+## Technology
 
-- Ticket panel for bugs, general help, player reports, and appeals.
-- A category-specific form asks for the in-game name and case description.
-- Private ticket channels for the requester and the responsible team.
-- A single **Send survey** button inside each ticket.
-- Ticket ratings for the staff member, attention, solution, and an optional comment.
-- Automatic HTML transcript when a ticket closes.
-- Uses the existing channel layout: **Log-Ticket** receives closures, ratings, and appeals; **Images-tickets** receives attachments; **copias-transcrip** receives transcripts.
-- PostgreSQL storage for tickets, messages, attachments, ratings, strikes, and moderation actions.
-- Moderation panel for warnings, strikes, timeouts, kicks, and bans.
-- Windows scheduled-task installation with automatic restart.
+- Java 21
+- JDA 6.5
+- PostgreSQL
+- HikariCP
+- Maven
+- JUnit 5
 
-## Requirements
+## Project structure
 
-- Windows Server 2019, 2022, or 2025
+| Path | Responsibility |
+|---|---|
+| `src/main/java/com/islaspider/bot/BotApplication.java` | Application bootstrap and JDA lifecycle |
+| `src/main/java/com/islaspider/bot/CommandRegistry.java` | Registration of the single `/setup` command |
+| `src/main/java/com/islaspider/bot/config` | Environment loading and configuration validation |
+| `src/main/java/com/islaspider/bot/db` | Database connection, schema initialization, and repositories |
+| `src/main/java/com/islaspider/bot/listener` | Discord commands, buttons, menus, modals, and message events |
+| `src/main/java/com/islaspider/bot/model` | Ticket and moderation domain records |
+| `src/main/java/com/islaspider/bot/service` | Panels, permissions, and transcript generation |
+| `src/main/resources/schema.sql` | Application database schema |
+| `src/test/java` | Unit and PostgreSQL integration tests |
+| `.github/workflows/build.yml` | Windows build and PostgreSQL integration CI |
+
+## Development requirements
+
 - JDK 21
 - Apache Maven 3.9 or newer
-- PostgreSQL 14 or newer
-- A Discord application and bot
+- PostgreSQL 14 or newer only when running integration tests locally
 
-## 1. Configure Discord
+Check the toolchain:
 
-In the [Discord Developer Portal](https://discord.com/developers/applications):
-
-1. Enable **Server Members Intent** and **Message Content Intent**.
-2. Install the bot with the `bot` and `applications.commands` scopes.
-3. Grant these permissions:
-   - View Channels
-   - Manage Channels
-   - Manage Roles
-   - Send Messages
-   - Manage Messages
-   - Embed Links
-   - Attach Files
-   - Read Message History
-   - Use Application Commands
-   - Moderate Members
-   - Kick Members
-   - Ban Members
-4. Place the bot role above every role it must moderate.
-5. Enable Developer Mode in Discord so you can copy server, channel, category, and role IDs.
-
-## 2. Prepare the Discord server
-
-The bot is configured for this existing layout inside the **TICKET** category:
-
-| Existing channel | Purpose |
-|---|---|
-| `Ticket` | Ticket panel published with `/setup` |
-| `Log-Ticket` | Closed-ticket logs, ticket ratings, and appeals |
-| `Images-tickets` | Images, files, and links sent in tickets |
-| `copias-transcrip` | Archived HTML transcript copies |
-
-You only need a Staff role and a Moderator role in addition to these channels. Run `/setup` inside `Ticket` to publish the support panel. The moderation panel can be published in a separate staff-only channel if needed.
-
-## 3. Prepare PostgreSQL
-
-Open `database/create_database.sql`, replace the example password, and run it with a PostgreSQL administrator account.
-
-Do not run the script if the database and user already exist. The bot creates and updates its own tables when it starts.
-
-## 4. Configure the environment
-
-From PowerShell in the project directory:
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
+```bash
+java -version
+mvn -version
 ```
 
-Fill in only these values:
+## Build and test
 
-| Variable | Value |
-|---|---|
-| `DISCORD_TOKEN` | Secret bot token from the Developer Portal |
-| `GUILD_ID` | Discord server ID |
-| `TICKET_CATEGORY_ID` | Category used for private ticket channels |
-| `TICKET_LOG_CHANNEL_ID` | `Log-Ticket`; also receives ratings and appeals |
-| `TICKET_IMAGE_CHANNEL_ID` | `Images-tickets` channel |
-| `TICKET_TRANSCRIPT_CHANNEL_ID` | `copias-transcrip` channel |
-| `STAFF_ROLE_ID` | Staff role ID |
-| `MOD_ROLE_ID` | Moderator role ID |
-| `DB_URL` | PostgreSQL JDBC URL |
-| `DB_USER` | PostgreSQL username |
-| `DB_PASSWORD` | PostgreSQL password |
+Run the complete verification suite:
 
-Never commit or share the real `.env` file. It is already excluded by `.gitignore`.
-
-## 5. Build and start
-
-Run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-powershell -ExecutionPolicy Bypass -File scripts\start.ps1
+```bash
+mvn clean verify
 ```
 
-A successful startup prints a message similar to:
+Create the runnable shaded JAR:
+
+```bash
+mvn clean package
+```
+
+The resulting artifact is:
 
 ```text
-Bot conectado como ISLA SPIDER BOT en Isla Spider
+target/isla-spider-ticket-bot.jar
 ```
 
-The bot validates the configured Discord objects and permissions during startup. If an ID or permission is incorrect, it stops and reports the exact configuration problem.
+## PostgreSQL integration tests
 
-## 6. Publish the panels
+Integration tests are skipped when `TEST_DB_URL` is not defined. To run them locally, provide a disposable PostgreSQL database through these test-only variables:
 
-Run `/setup` as a server administrator. The private setup assistant provides two buttons:
-
-- **Publish tickets**: posts the support center and ticket category menu.
-- **Publish moderation**: posts the warnings and sanctions panel.
-
-Publish the moderation panel only in a channel visible to authorized staff.
-
-## 7. Start automatically with Windows
-
-Open PowerShell as Administrator and run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
+```text
+TEST_DB_URL
+TEST_DB_USER
+TEST_DB_PASSWORD
 ```
 
-This creates the `IslaSpiderTicketBot` scheduled task under the `SYSTEM` account. Runtime output is written to `logs\bot.log`.
+Then run:
 
-## Troubleshooting
+```bash
+mvn verify
+```
 
-- **The bot is offline:** run `scripts\start.ps1` and check `logs\bot.log`.
-- **The command is missing:** confirm that the bot was installed with `applications.commands`.
-- **Messages are not archived:** enable Message Content Intent.
-- **Tickets cannot be created:** verify Manage Channels and access to the ticket category.
-- **Timeout, kick, or ban fails:** move the bot role above the target member's highest role.
-- **PostgreSQL fails:** verify `DB_URL`, `DB_USER`, `DB_PASSWORD`, and that PostgreSQL is listening on `localhost:5432`.
-- **Appeal DMs fail:** the user may have disabled direct messages; the appeal remains stored and logged.
+The integration suite initializes the schema and truncates its tables between tests. Never point it at production data.
+
+## Architecture notes
+
+- `/setup` is the only slash command.
+- Regular workflows use Discord buttons, select menus, and modal forms.
+- Ticket, feedback, attachment, transcript, strike, and moderation data are persisted in PostgreSQL.
+- Repository methods own persistence and transactional consistency.
+- Discord listeners coordinate interactions and delegate reusable work to services.
+- Configuration is validated before the bot starts accepting events.
+
+## CI
+
+GitHub Actions runs on every pull request and every push to `main`:
+
+- Windows build and unit tests on Java 21.
+- PostgreSQL integration tests on Linux with PostgreSQL 16.
+- Upload of the runnable JAR after a successful Windows build.
+
+## Contribution workflow
+
+1. Create a branch from `main`.
+2. Keep changes focused and avoid committing secrets or generated files.
+3. Add or update tests for behavior changes.
+4. Run `mvn clean verify`.
+5. Open a pull request and wait for all CI jobs to pass.
+
+## Security
+
+- Never commit Discord tokens, database passwords, or real environment files.
+- Keep permission checks on every staff or moderation interaction.
+- Use parameterized SQL for all user-controlled values.
+- Treat transcript and attachment data as private support information.
