@@ -32,7 +32,14 @@ $LogFile = Join-Path $LogDirectory "bot.log"
 $StartedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 "[$StartedAt] Iniciando Isla Spider Ticket Bot con $JavaPath" | Tee-Object -FilePath $LogFile -Append
 
-& $JavaPath -Xms128m -Xmx512m -jar "target\isla-spider-ticket-bot.jar" 2>&1 |
-    Tee-Object -FilePath $LogFile -Append
-$ExitCode = $LASTEXITCODE
+$PreviousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $JavaPath -Xms128m -Xmx512m -jar "target\isla-spider-ticket-bot.jar" 2>&1 |
+        Tee-Object -FilePath $LogFile -Append
+    $ExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
+}
+
 if ($ExitCode -ne 0) { throw "El bot termino con codigo $ExitCode. Revisa $LogFile" }
