@@ -100,6 +100,12 @@ public final class TicketListener extends ListenerAdapter {
             String id = event.getComponentId();
             if (PanelFactory.SURVEY_BUTTON_ID.equals(id)) {
                 sendSurvey(event);
+            } else if (PanelFactory.DELETE_BUTTON_ID.equals(id)) {
+                requestTicketDeletion(event);
+            } else if (PanelFactory.DELETE_CONFIRM_BUTTON_ID.equals(id)) {
+                deleteTicket(event);
+            } else if (PanelFactory.DELETE_CANCEL_BUTTON_ID.equals(id)) {
+                cancelTicketDeletion(event);
             } else if (id.startsWith("appeal:approve:") || id.startsWith("appeal:reject:")) {
                 openAppealDecisionModal(event);
             }
@@ -233,6 +239,102 @@ public final class TicketListener extends ListenerAdapter {
                     event.getHook().editOriginal("❌ No se pudo publicar la apelación: "
                             + safeMessage(error) + ". Puedes volver a intentarlo.").queue();
                 });
+    }
+
+    private void requestTicketDeletion(ButtonInteractionEvent event) {
+        if (!permissions.isStaff(event.getMember())) {
+            event.reply("❌ Solo el equipo puede eliminar el ticket.").setEphemeral(true).queue();
+            return;
+        }
+        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
+            return;
+        }
+        event.reply("⚠️ ¿Confirmas que deseas archivar y eliminar este ticket? La encuesta es opcional.")
+                .setEphemeral(true)
+                .setComponents(ActionRow.of(
+                        net.dv8tion.jda.api.components.buttons.Button.danger(
+                                PanelFactory.DELETE_CONFIRM_BUTTON_ID, "Sí, eliminar"),
+                        net.dv8tion.jda.api.components.buttons.Button.secondary(
+                                PanelFactory.DELETE_CANCEL_BUTTON_ID, "Cancelar")))
+                .queue();
+    }
+
+    private void cancelTicketDeletion(ButtonInteractionEvent event) {
+        if (!permissions.isStaff(event.getMember())) {
+            event.reply("❌ Solo el equipo puede gestionar el ticket.").setEphemeral(true).queue();
+            return;
+        }
+        event.editMessage("✅ Eliminación cancelada.").setComponents().queue();
+    }
+
+    private void deleteTicket(ButtonInteractionEvent event) {
+        if (!permissions.isStaff(event.getMember())) {
+            event.reply("❌ Solo el equipo puede eliminar el ticket.").setEphemeral(true).queue();
+            return;
+        }
+        Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
+            return;
+        }
+        Guild guild = requireGuild(event.getGuild());
+        event.deferReply(true).queue(hook -> {
+            String reason = "Cierre manual por el equipo";
+            final Path transcript;
+            final List<CompletableFuture<Message>> uploads;
+            try {
+                transcript = transcripts.generate(ticket);
+                uploads = uploadManualClosureArchive(
+                        guild, ticket, event.getUser().getIdLong(), reason, transcript);
+            } catch (RuntimeException exception) {
+                hook.editOriginal("❌ No se eliminó el ticket: " + safeMessage(exception)
+                        + ". El canal se conservará para reintentarlo.").queue();
+                return;
+            }
+
+            CompletableFuture.allOf(uploads.toArray(CompletableFuture[]::new))
+                    .whenComplete((unused, uploadError) -> {
+                        List<Message> archivedMessages = successfulMessages(uploads);
+                        if (uploadError != null) {
+                            deleteMessages(archivedMessages);
+                            hook.editOriginal("❌ No se eliminó el ticket porque no fue posible guardar todos los logs: "
+                                    + safeMessage(rootCause(uploadError))
+                                    + ". El canal se conservará para reintentarlo.").queue();
+                            return;
+                        }
+                        try {
+                            boolean closed = tickets.close(ticket.id(), event.getUser().getIdLong(),
+                                    reason, transcript.toString());
+                            if (!closed) {
+                                deleteMessages(archivedMessages);
+                                hook.editOriginal("⚠️ Este ticket ya fue cerrado.").queue();
+                                return;
+                            }
+                        } catch (RuntimeException exception) {
+                            deleteMessages(archivedMessages);
+                            hook.editOriginal("❌ PostgreSQL no permitió cerrar el ticket: "
+                                    + safeMessage(exception)
+                                    + ". El canal se conservará para reintentarlo.").queue();
+                            return;
+                        }
+
+                        hook.editOriginal("✅ Ticket archivado y cerrado correctamente.").queue();
+                        if (event.getChannel() instanceof TextChannel channel) {
+                            channel.sendMessage("🗑️ Ticket cerrado manualmente por "
+                                            + event.getUser().getAsMention() + ".")
+                                    .queue(null, ignored -> {});
+                            if (config.deleteTicketChannelOnClose()) {
+                                channel.delete().reason("Ticket cerrado manualmente")
+                                        .queueAfter(5, TimeUnit.SECONDS, ignored -> {},
+                                                error -> hook.editOriginal(
+                                                        "✅ El ticket fue archivado, pero Discord no permitió eliminar el canal: "
+                                                                + safeMessage(error)).queue());
+                            }
+                        }
+                    });
+        });
     }
 
     private void sendSurvey(ButtonInteractionEvent event) {
@@ -386,11 +488,6 @@ public final class TicketListener extends ListenerAdapter {
                                                                    int attention, int solution, String comment,
                                                                    String reason, Path transcript) {
         TextChannel ratings = requireTextChannel(guild, config.ticketRatingChannelId(), "valoraciones");
-        TextChannel log = requireTextChannel(guild, config.ticketLogChannelId(), "logs de tickets");
-        TextChannel transcriptLog = requireTextChannel(guild, config.ticketTranscriptChannelId(), "transcripciones");
-        String openedAt = "<t:" + ticket.createdAt().toEpochSecond() + ":F>";
-        String claimedBy = ticket.claimedBy() == null ? "No reclamado" : "<@" + ticket.claimedBy() + ">";
-
         List<CompletableFuture<Message>> uploads = new ArrayList<>();
         uploads.add(ratings.sendMessageEmbeds(new EmbedBuilder()
                         .setColor(new Color(255, 193, 7))
@@ -404,18 +501,32 @@ public final class TicketListener extends ListenerAdapter {
                         .setTimestamp(OffsetDateTime.now())
                         .build())
                 .submit());
+        uploads.addAll(uploadManualClosureArchive(guild, ticket, attendedBy, reason, transcript));
+        return uploads;
+    }
 
+    private List<CompletableFuture<Message>> uploadManualClosureArchive(
+            Guild guild, Ticket ticket, long closedBy, String reason, Path transcript) {
+        TextChannel log = requireTextChannel(guild, config.ticketLogChannelId(), "logs de tickets");
+        TextChannel transcriptLog = requireTextChannel(
+                guild, config.ticketTranscriptChannelId(), "transcripciones");
+        String openedAt = "<t:" + ticket.createdAt().toEpochSecond() + ":F>";
+        String claimedBy = ticket.claimedBy() == null
+                ? "No reclamado"
+                : "<@" + ticket.claimedBy() + ">";
+
+        List<CompletableFuture<Message>> uploads = new ArrayList<>();
         uploads.add(log.sendMessageEmbeds(new EmbedBuilder()
-                            .setColor(new Color(87, 242, 135))
-                            .setTitle("Ticket cerrado")
-                            .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
-                            .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
-                            .addField("⛔ Cerrado por", "<@" + attendedBy + ">", true)
-                            .addField("🕘 Fecha de apertura", openedAt, true)
-                            .addField("🟣 Reclamado por", claimedBy, true)
-                            .addField("❓ Motivo", truncate(reason, 1000), false)
-                            .setTimestamp(OffsetDateTime.now())
-                            .build())
+                        .setColor(new Color(87, 242, 135))
+                        .setTitle("Ticket cerrado")
+                        .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
+                        .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
+                        .addField("⛔ Cerrado por", "<@" + closedBy + ">", true)
+                        .addField("🕘 Fecha de apertura", openedAt, true)
+                        .addField("🟣 Reclamado por", claimedBy, true)
+                        .addField("❓ Motivo", truncate(reason, 1000), false)
+                        .setTimestamp(OffsetDateTime.now())
+                        .build())
                 .submit());
 
         CompletableFuture<Message> transcriptUpload = transcriptLog.sendMessageEmbeds(new EmbedBuilder()
@@ -423,7 +534,7 @@ public final class TicketListener extends ListenerAdapter {
                         .setTitle("Copia archivada de transcripción")
                         .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
                         .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
-                        .addField("⛔ Generada por", "<@" + attendedBy + ">", true)
+                        .addField("⛔ Generada por", "<@" + closedBy + ">", true)
                         .addField("🕘 Fecha de apertura", openedAt, true)
                         .addField("🟣 Reclamado por", claimedBy, true)
                         .addField("❓ Motivo", truncate(reason, 1000), false)
