@@ -95,6 +95,37 @@ class PostgresIntegrationTest {
     }
 
     @Test
+    void closesTicketManuallyWithoutCreatingFeedback() throws Exception {
+        long ticketId = tickets.create(1, 100L, 203, TicketType.HELP, "Jugador",
+                "Cierre manual", "Descripción suficientemente detallada", null, "", List.of());
+
+        assertTrue(tickets.close(ticketId, 900, "Cierre manual por el equipo",
+                "transcripts/ticket-manual.html"));
+        assertFalse(tickets.close(ticketId, 901, "Segundo cierre",
+                "transcripts/ticket-manual-2.html"));
+
+        try (var connection = database.connection();
+             var statement = connection.prepareStatement("""
+                     SELECT status, closed_by, close_reason, transcript_path,
+                            (SELECT COUNT(*) FROM ticket_feedback WHERE ticket_id=?) AS feedback_count
+                       FROM tickets
+                      WHERE id=?
+                     """)) {
+            statement.setLong(1, ticketId);
+            statement.setLong(2, ticketId);
+            try (ResultSet result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("CLOSED", result.getString("status"));
+                assertEquals(900, result.getLong("closed_by"));
+                assertEquals("Cierre manual por el equipo", result.getString("close_reason"));
+                assertEquals("transcripts/ticket-manual.html", result.getString("transcript_path"));
+                assertEquals(0, result.getInt("feedback_count"));
+                assertFalse(result.next());
+            }
+        }
+    }
+
+    @Test
     void onlyOneModeratorCanResolveAnAppeal() {
         long ticketId = tickets.create(1, null, 202, TicketType.APPEAL, "Jugador",
                 "Apelar ban", "Descripción suficientemente detallada", null, "", List.of());
