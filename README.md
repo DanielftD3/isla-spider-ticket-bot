@@ -12,7 +12,7 @@ The only slash command is `/setup`. All daily actions use buttons, select menus,
 - A single **Send survey** button inside each ticket.
 - Ticket ratings for the staff member, attention, solution, and an optional comment.
 - Automatic HTML transcript when a ticket closes.
-- Separate channels for ticket logs, attachments, transcripts, ratings, and appeals.
+- Uses the existing channel layout: **Log-Ticket** receives closures, ratings, and appeals; **Images-tickets** receives attachments; **copias-transcrip** receives transcripts.
 - PostgreSQL storage for tickets, messages, attachments, ratings, strikes, and moderation actions.
 - Moderation panel for warnings, strikes, timeouts, kicks, and bans.
 - Windows scheduled-task installation with automatic restart.
@@ -49,18 +49,16 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
 
 ## 2. Prepare the Discord server
 
-Create the following:
+The bot is configured for this existing layout inside the **TICKET** category:
 
-- One category for private ticket channels.
-- One ticket log channel.
-- One attachment and image log channel.
-- One transcript archive channel.
-- One ticket rating channel.
-- One private appeal channel.
-- A Staff role.
-- A Moderator role.
+| Existing channel | Purpose |
+|---|---|
+| `Ticket` | Ticket panel published with `/setup` |
+| `Log-Ticket` | Closed-ticket logs, ticket ratings, and appeals |
+| `Images-tickets` | Images, files, and links sent in tickets |
+| `copias-transcrip` | Archived HTML transcript copies |
 
-The ticket panel and moderation panel do not require environment variables. Run `/setup` in the channel where you want to publish each panel.
+You only need a Staff role and a Moderator role in addition to these channels. Run `/setup` inside `Ticket` to publish the support panel. The moderation panel can be published in a separate staff-only channel if needed.
 
 ## 3. Prepare PostgreSQL
 
@@ -84,11 +82,9 @@ Fill in only these values:
 | `DISCORD_TOKEN` | Secret bot token from the Developer Portal |
 | `GUILD_ID` | Discord server ID |
 | `TICKET_CATEGORY_ID` | Category used for private ticket channels |
-| `TICKET_LOG_CHANNEL_ID` | Closed-ticket log channel |
-| `TICKET_IMAGE_CHANNEL_ID` | Attachment and image log channel |
-| `TICKET_TRANSCRIPT_CHANNEL_ID` | Transcript archive channel |
-| `TICKET_RATING_CHANNEL_ID` | Ticket rating channel |
-| `APPEAL_LOG_CHANNEL_ID` | Private appeal review channel |
+| `TICKET_LOG_CHANNEL_ID` | `Log-Ticket`; also receives ratings and appeals |
+| `TICKET_IMAGE_CHANNEL_ID` | `Images-tickets` channel |
+| `TICKET_TRANSCRIPT_CHANNEL_ID` | `copias-transcrip` channel |
 | `STAFF_ROLE_ID` | Staff role ID |
 | `MOD_ROLE_ID` | Moderator role ID |
 | `DB_URL` | PostgreSQL JDBC URL |
