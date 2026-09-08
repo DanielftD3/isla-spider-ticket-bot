@@ -171,6 +171,23 @@ public final class TicketRepository {
         }
     }
 
+    public boolean close(long ticketId, long closedBy, String reason, String transcriptPath) {
+        String sql = """
+                UPDATE tickets
+                   SET status='CLOSED', closed_at=NOW(), closed_by=?, close_reason=?, transcript_path=?
+                 WHERE id=? AND status='OPEN'
+                """;
+        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, closedBy);
+            statement.setString(2, reason);
+            statement.setString(3, transcriptPath);
+            statement.setLong(4, ticketId);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudo cerrar el ticket", exception);
+        }
+    }
+
     public boolean failOpen(long ticketId, String reason) {
         String sql = """
                 UPDATE tickets
