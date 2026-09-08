@@ -1,167 +1,144 @@
 # Isla Spider Ticket Bot
 
-Bot de Discord en Java para tickets privados, apelaciones por mensaje directo y moderación basada en strikes. Usa JDA 6, PostgreSQL y un archivo `.env`; no necesita una página web para funcionar.
+A Java Discord bot for private support tickets, ticket ratings, HTML transcripts, appeals by direct message, and strike-based moderation. It uses JDA 6 and PostgreSQL and is designed to run on Windows Server.
 
-## Funciones incluidas
+The only slash command is `/setup`. All daily actions use buttons, select menus, and forms.
 
-- Panel con menú para `Bug`, `Ayuda`, `Reporte` y `Apelación`.
-- Formularios distintos según el tipo de caso.
-- Identificación mediante el nombre dentro del juego.
-- Canal privado para el autor y el equipo responsable: Staff en bugs/ayuda y Moderación en reportes.
-- Un único botón dentro del ticket: **Enviar encuesta**.
-- Registro de mensajes, imágenes, archivos y enlaces en PostgreSQL.
-- Log visual de imágenes y archivos en un canal independiente.
-- Transcripción HTML al cerrar y copia archivada en su propio canal.
-- Valoraciones con administrador, atención, solución y comentario.
-- Cierre seguro: el canal solo se elimina después de confirmar logs, valoración, transcripción y PostgreSQL.
-- Apelaciones enviadas a un canal privado de administración.
-- Resultado de la apelación por mensaje directo.
-- Panel de Moderación para añadir, quitar y revisar warns, además de mute, kick y ban.
-- Un único comando: `/setup`; el resto funciona con botones, menús y formularios.
-- Historial de strikes activos y retiro auditable de strikes.
-- Instalación como tarea programada de Windows Server.
+## Features
 
-## Warn y strike no son lo mismo
+- Ticket panel for bugs, general help, player reports, and appeals.
+- A category-specific form asks for the in-game name and case description.
+- Private ticket channels for the requester and the responsible team.
+- A single **Send survey** button inside each ticket.
+- Ticket ratings for the staff member, attention, solution, and an optional comment.
+- Automatic HTML transcript when a ticket closes.
+- Separate channels for ticket logs, attachments, transcripts, ratings, and appeals.
+- PostgreSQL storage for tickets, messages, attachments, ratings, strikes, and moderation actions.
+- Moderation panel for warnings, strikes, timeouts, kicks, and bans.
+- Windows scheduled-task installation with automatic restart.
 
-| Acción | Suma puntos | Queda registrada | Puede activar sanción |
-|---|---:|---:|---:|
-| **Advertir sin puntos** | No | Sí | No |
-| **Añadir Warn** | Sí | Sí | Sí, si se habilita |
-| **Quitar Warn** | Resta el warn activo | Sí, sin borrar el historial | Recalcula el total para el futuro |
+## Requirements
 
-Las sanciones automáticas están desactivadas inicialmente con `AUTO_APPLY_STRIKE_SANCTIONS=false`. Cuando la política esté probada, se puede activar. Por defecto, 3 puntos generan mute de 24 horas y 5 puntos generan ban.
+- Windows Server 2019, 2022, or 2025
+- JDK 21
+- Apache Maven 3.9 or newer
+- PostgreSQL 14 or newer
+- A Discord application and bot
 
-## Requisitos
+## 1. Configure Discord
 
-- Windows Server 2019, 2022 o 2025.
-- JDK 21.
-- Apache Maven 3.9 o superior.
-- PostgreSQL 14 o superior.
-- Un bot creado en Discord Developer Portal.
+In the [Discord Developer Portal](https://discord.com/developers/applications):
 
-## 1. Preparar Discord
+1. Enable **Server Members Intent** and **Message Content Intent**.
+2. Install the bot with the `bot` and `applications.commands` scopes.
+3. Grant these permissions:
+   - View Channels
+   - Manage Channels
+   - Manage Roles
+   - Send Messages
+   - Manage Messages
+   - Embed Links
+   - Attach Files
+   - Read Message History
+   - Use Application Commands
+   - Moderate Members
+   - Kick Members
+   - Ban Members
+4. Place the bot role above every role it must moderate.
+5. Enable Developer Mode in Discord so you can copy server, channel, category, and role IDs.
 
-1. En Discord Developer Portal crea una aplicación y luego un bot.
-2. En **Bot > Privileged Gateway Intents**, activa:
-   - `Server Members Intent`.
-   - `Message Content Intent`.
-3. Invita el bot con los scopes `bot` y `applications.commands`.
-4. Asígnale estos permisos:
-   - View Channels.
-   - Send Messages.
-   - Embed Links.
-   - Attach Files.
-   - Read Message History.
-   - Manage Channels.
-   - Moderate Members.
-   - Kick Members.
-   - Ban Members.
-5. Coloca el rol del bot por encima de los roles que debe moderar.
-6. Activa **Modo desarrollador** en Discord para copiar IDs.
+## 2. Prepare the Discord server
 
-## 2. Preparar PostgreSQL
+Create the following:
 
-Abre `database/create_database.sql`, cambia la contraseña y ejecútalo como administrador de PostgreSQL. El bot crea sus tablas automáticamente la primera vez que inicia.
+- One category for private ticket channels.
+- One ticket log channel.
+- One attachment and image log channel.
+- One transcript archive channel.
+- One ticket rating channel.
+- One private appeal channel.
+- A Staff role.
+- A Moderator role.
 
-Si el usuario y la base ya existen, no ejecutes ese archivo; solo configura su conexión en `.env`.
+The ticket panel and moderation panel do not require environment variables. Run `/setup` in the channel where you want to publish each panel.
 
-## 3. Configurar el bot
+## 3. Prepare PostgreSQL
 
-Desde PowerShell, dentro de la carpeta del proyecto:
+Open `database/create_database.sql`, replace the example password, and run it with a PostgreSQL administrator account.
+
+Do not run the script if the database and user already exist. The bot creates and updates its own tables when it starts.
+
+## 4. Configure the environment
+
+From PowerShell in the project directory:
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Completa todos los IDs:
+Fill in only these values:
 
-| Variable | Contenido |
+| Variable | Value |
 |---|---|
-| `GUILD_ID` | ID del servidor de Discord |
-| `TICKET_CATEGORY_ID` | Categoría donde se crearán los canales privados |
-| `TICKET_LOG_CHANNEL_ID` | Canal que recibe el resumen de los tickets cerrados |
-| `TICKET_IMAGE_CHANNEL_ID` | Canal que muestra las imágenes y archivos enviados |
-| `TICKET_TRANSCRIPT_CHANNEL_ID` | Canal que conserva las copias HTML de transcripciones |
-| `TICKET_RATING_CHANNEL_ID` | Canal que recibe las valoraciones de los tickets |
-| `APPEAL_LOG_CHANNEL_ID` | Canal privado donde administración revisa apelaciones |
-| `STAFF_ROLE_ID` | Rol que atiende bugs y ayuda |
-| `MOD_ROLE_ID` | Rol autorizado para strikes y sanciones |
+| `DISCORD_TOKEN` | Secret bot token from the Developer Portal |
+| `GUILD_ID` | Discord server ID |
+| `TICKET_CATEGORY_ID` | Category used for private ticket channels |
+| `TICKET_LOG_CHANNEL_ID` | Closed-ticket log channel |
+| `TICKET_IMAGE_CHANNEL_ID` | Attachment and image log channel |
+| `TICKET_TRANSCRIPT_CHANNEL_ID` | Transcript archive channel |
+| `TICKET_RATING_CHANNEL_ID` | Ticket rating channel |
+| `APPEAL_LOG_CHANNEL_ID` | Private appeal review channel |
+| `STAFF_ROLE_ID` | Staff role ID |
+| `MOD_ROLE_ID` | Moderator role ID |
+| `DB_URL` | PostgreSQL JDBC URL |
+| `DB_USER` | PostgreSQL username |
+| `DB_PASSWORD` | PostgreSQL password |
 
-Nunca publiques ni subas el archivo `.env`. El token permite controlar el bot.
+Never commit or share the real `.env` file. It is already excluded by `.gitignore`.
 
-## 4. Compilar y arrancar
+## 5. Build and start
+
+Run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 ```
 
-Al iniciar, debe aparecer algo similar a:
+A successful startup prints a message similar to:
 
 ```text
 Bot conectado como ISLA SPIDER BOT en Isla Spider
 ```
 
-Después ejecuta `/setup`. El bot mostrará un asistente privado con dos botones:
+The bot validates the configured Discord objects and permissions during startup. If an ID or permission is incorrect, it stops and reports the exact configuration problem.
 
-- **Publicar tickets**: publica el centro de soporte y su menú de categorías.
-- **Publicar moderación**: publica el panel privado de warns y sanciones.
+## 6. Publish the panels
 
-El canal donde publiques Moderación debe ser visible únicamente para el equipo autorizado.
+Run `/setup` as a server administrator. The private setup assistant provides two buttons:
 
-## 5. Dejarlo funcionando al reiniciar Windows
+- **Publish tickets**: posts the support center and ticket category menu.
+- **Publish moderation**: posts the warnings and sanctions panel.
 
-Abre PowerShell como administrador y ejecuta:
+Publish the moderation panel only in a channel visible to authorized staff.
+
+## 7. Start automatically with Windows
+
+Open PowerShell as Administrator and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
 ```
 
-Esto crea la tarea programada `IslaSpiderTicketBot` bajo la cuenta `SYSTEM`.
-El instalador fija la ruta exacta de Java, reinicia el proceso si falla y escribe la salida en `logs\bot.log`.
+This creates the `IslaSpiderTicketBot` scheduled task under the `SYSTEM` account. Runtime output is written to `logs\bot.log`.
 
-## Paneles y botones
+## Troubleshooting
 
-`/setup` es el único comando y solo puede usarlo un administrador. Todas las operaciones diarias se realizan desde componentes de Discord:
-
-| Lugar | Acciones |
-|---|---|
-| Panel de tickets | Bug, ayuda, reporte y apelación |
-| Dentro de un ticket | Enviar encuesta |
-| Panel de Moderación | Añadir, quitar o revisar warns; advertir sin puntos; mute, kick y ban |
-| Encuesta | Selección del administrador, atención y solución de 1 a 10, comentario y cierre automático |
-
-## Política sugerida para empezar
-
-| Total activo | Acción sugerida |
-|---:|---|
-| 1 | Advertencia formal |
-| 2 | Último aviso y seguimiento |
-| 3–4 | Mute de 24 horas |
-| 5 o más | Revisión para ban |
-
-Conviene mantener `AUTO_APPLY_STRIKE_SANCTIONS=false` durante las primeras pruebas. Así el bot informa el total, pero un moderador confirma la sanción.
-
-## Estructura principal
-
-```text
-src/main/java/com/islaspider/bot/
-├── BotApplication.java
-├── CommandRegistry.java
-├── config/
-├── db/
-├── listener/
-├── model/
-└── service/
-```
-
-## Solución de problemas
-
-- **No aparecen los comandos:** confirma que se invitó con `applications.commands` y reinicia Discord.
-- **No se archivan mensajes:** activa `Message Content Intent` en el portal.
-- **No puede crear canales:** dale `Manage Channels` y acceso a la categoría.
-- **No puede mutear o banear:** sube el rol del bot por encima del usuario objetivo.
-- **Error de PostgreSQL:** verifica `DB_URL`, usuario, contraseña y que el servicio escuche en `localhost:5432`.
-- **No llegan mensajes privados:** el usuario puede tener bloqueados los DMs del servidor; el caso queda registrado igualmente.
-- **La tarea de Windows se detiene:** revisa `logs\bot.log` y el historial de `IslaSpiderTicketBot` en el Programador de tareas.
+- **The bot is offline:** run `scripts\start.ps1` and check `logs\bot.log`.
+- **The command is missing:** confirm that the bot was installed with `applications.commands`.
+- **Messages are not archived:** enable Message Content Intent.
+- **Tickets cannot be created:** verify Manage Channels and access to the ticket category.
+- **Timeout, kick, or ban fails:** move the bot role above the target member's highest role.
+- **PostgreSQL fails:** verify `DB_URL`, `DB_USER`, `DB_PASSWORD`, and that PostgreSQL is listening on `localhost:5432`.
+- **Appeal DMs fail:** the user may have disabled direct messages; the appeal remains stored and logged.
