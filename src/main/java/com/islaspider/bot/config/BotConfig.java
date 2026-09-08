@@ -54,7 +54,7 @@ public record BotConfig(
                 optionalId(values, "TICKET_IMAGE_CHANNEL_ID", ticketLogChannelId),
                 optionalId(values, "TICKET_TRANSCRIPT_CHANNEL_ID", ticketLogChannelId),
                 optionalId(values, "TICKET_RATING_CHANNEL_ID", ticketLogChannelId),
-                requiredId(values, "APPEAL_LOG_CHANNEL_ID"),
+                optionalId(values, "APPEAL_LOG_CHANNEL_ID", ticketLogChannelId),
                 requiredId(values, "STAFF_ROLE_ID"),
                 requiredId(values, "MOD_ROLE_ID"),
                 required(values, "DB_URL"),
@@ -99,7 +99,7 @@ public record BotConfig(
 
     private static String required(Map<String, String> values, String key) {
         String value = values.get(key);
-        if (value == null || value.isBlank() || value.startsWith("PEGA_") || value.startsWith("CAMBIA_")) {
+        if (value == null || value.isBlank() || value.startsWith("PEGA_") || value.startsWith("CAMBIA_") || value.startsWith("YOUR_")) {
             throw new IllegalStateException("Falta configurar " + key + " en el archivo .env");
         }
         return value.trim();
