@@ -16,6 +16,9 @@ import java.util.List;
 public final class PanelFactory {
     public static final String CREATE_MENU_ID = "ticket:create";
     public static final String SURVEY_BUTTON_ID = "ticket:survey";
+    public static final String DELETE_BUTTON_ID = "ticket:delete";
+    public static final String DELETE_CONFIRM_BUTTON_ID = "ticket:delete-confirm";
+    public static final String DELETE_CANCEL_BUTTON_ID = "ticket:delete-cancel";
     public static final String SURVEY_STAFF_PREFIX = "ticket:survey-staff:";
     public static final String PANEL_IMAGE_NAME = "isla-spider-panel.jpg";
 
@@ -96,8 +99,12 @@ public final class PanelFactory {
     }
 
     public ActionRow ticketControls() {
-        return ActionRow.of(Button.primary(SURVEY_BUTTON_ID, "Enviar encuesta")
-                .withEmoji(Emoji.fromUnicode("⭐")));
+        return ActionRow.of(
+                Button.primary(SURVEY_BUTTON_ID, "Enviar encuesta")
+                        .withEmoji(Emoji.fromUnicode("⭐")),
+                Button.danger(DELETE_BUTTON_ID, "Eliminar ticket")
+                        .withEmoji(Emoji.fromUnicode("🗑️"))
+        );
     }
 
     public List<ActionRow> surveyStaffMenus(long ticketId, List<Member> staffMembers) {
