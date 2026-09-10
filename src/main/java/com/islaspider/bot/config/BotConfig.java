@@ -56,7 +56,7 @@ public record BotConfig(
                 ticketLogChannelId,
                 optionalId(values, "TICKET_IMAGE_CHANNEL_ID", ticketLogChannelId),
                 optionalId(values, "TICKET_TRANSCRIPT_CHANNEL_ID", ticketLogChannelId),
-                optionalId(values, "TICKET_RATING_CHANNEL_ID", ticketLogChannelId),
+                requiredId(values, "TICKET_RATING_CHANNEL_ID"),
                 optionalId(values, "APPEAL_LOG_CHANNEL_ID", ticketLogChannelId),
                 requiredId(values, "STAFF_ROLE_ID"),
                 requiredId(values, "MOD_ROLE_ID"),
