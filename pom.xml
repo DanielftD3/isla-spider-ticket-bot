@@ -7,7 +7,7 @@
     <groupId>com.islaspider</groupId>
     <artifactId>ticket-moderation-bot</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <name>Isla Spider Ticket Bot</name>
+    <name>ARK Dinosauria Ticket Bot</name>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>

@@ -20,7 +20,7 @@ public final class PanelFactory {
     public static final String DELETE_CONFIRM_BUTTON_ID = "ticket:delete-confirm";
     public static final String DELETE_CANCEL_BUTTON_ID = "ticket:delete-cancel";
     public static final String SURVEY_STAFF_PREFIX = "ticket:survey-staff:";
-    public static final String PANEL_IMAGE_NAME = "isla-spider-panel.jpg";
+    public static final String PANEL_IMAGE_NAME = "ark-dinosauria-panel.png";
 
     public static final String SETUP_TICKETS_BUTTON_ID = "setup:publish:tickets";
     public static final String SETUP_MODERATION_BUTTON_ID = "setup:publish:moderation";
@@ -37,7 +37,7 @@ public final class PanelFactory {
     public MessageEmbed setupPanel() {
         return new EmbedBuilder()
                 .setColor(new Color(88, 101, 242))
-                .setTitle("⚙️ ISLA SPIDER · CONFIGURACIÓN")
+                .setTitle("⚙️ ARK DINOSAURIA · CONFIGURACIÓN")
                 .setDescription("Publica desde aquí los paneles permanentes del bot. "
                         + "Este asistente solo es visible para ti.")
                 .addField("🎫 Panel de tickets", "Solicitudes, reportes y apelaciones.", false)
@@ -56,7 +56,7 @@ public final class PanelFactory {
     public MessageEmbed ticketPanel() {
         EmbedBuilder embed = new EmbedBuilder()
                 .setColor(new Color(230, 30, 40))
-                .setTitle("ISLA SPIDER · SOPORTE")
+                .setTitle("ARK DINOSAURIA · SOPORTE")
                 .setDescription("""
                         [**🎫**](https://discord.com/assets/0668ca7859b5ab1a.svg) **Centro de tickets**
 
