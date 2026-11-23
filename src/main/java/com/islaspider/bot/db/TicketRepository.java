@@ -45,7 +45,7 @@ public final class TicketRepository {
                 statement.executeUpdate();
                 long ticketId;
                 try (ResultSet keys = statement.getGeneratedKeys()) {
-                    if (!keys.next()) throw new SQLException("PostgreSQL no devolvio el ID del ticket");
+                    if (!keys.next()) throw new SQLException("El almacenamiento no devolvio el ID del ticket");
                     ticketId = keys.getLong(1);
                 }
                 OffsetDateTime createdAt = OffsetDateTime.now();
@@ -62,7 +62,7 @@ public final class TicketRepository {
                 throw exception;
             }
         } catch (SQLException exception) {
-            if ("23505".equals(exception.getSQLState())) {
+            if (database.isDuplicateOpenTicket(exception)) {
                 throw new IllegalStateException("Ya tienes un ticket abierto de esta categoría", exception);
             }
             throw new IllegalStateException("No se pudo guardar el ticket", exception);
@@ -106,7 +106,7 @@ public final class TicketRepository {
         String status = approved ? "APPROVED" : "REJECTED";
         String sql = """
                 UPDATE tickets
-                   SET status=?, closed_at=NOW(), closed_by=?, close_reason=?
+                   SET status=?, closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?
                  WHERE id=? AND type='APPEAL' AND status='OPEN'
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -125,7 +125,7 @@ public final class TicketRepository {
                                             String reason, String transcriptPath) {
         String closeSql = """
                 UPDATE tickets
-                   SET status='CLOSED', closed_at=NOW(), closed_by=?, close_reason=?, transcript_path=?
+                   SET status='CLOSED', closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?, transcript_path=?
                  WHERE id=? AND status='OPEN'
                 """;
         String feedbackSql = """
@@ -138,7 +138,7 @@ public final class TicketRepository {
                     attention_rating=EXCLUDED.attention_rating,
                     solution_rating=EXCLUDED.solution_rating,
                     comment=EXCLUDED.comment,
-                    created_at=NOW()
+                    created_at=CURRENT_TIMESTAMP
                 """;
         try (Connection connection = database.connection()) {
             connection.setAutoCommit(false);
@@ -174,7 +174,7 @@ public final class TicketRepository {
     public boolean close(long ticketId, long closedBy, String reason, String transcriptPath) {
         String sql = """
                 UPDATE tickets
-                   SET status='CLOSED', closed_at=NOW(), closed_by=?, close_reason=?, transcript_path=?
+                   SET status='CLOSED', closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?, transcript_path=?
                  WHERE id=? AND status='OPEN'
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -191,7 +191,7 @@ public final class TicketRepository {
     public boolean failOpen(long ticketId, String reason) {
         String sql = """
                 UPDATE tickets
-                   SET status='FAILED', closed_at=NOW(), close_reason=?
+                   SET status='FAILED', closed_at=CURRENT_TIMESTAMP, close_reason=?
                  WHERE id=? AND status='OPEN'
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -216,7 +216,7 @@ public final class TicketRepository {
             statement.setLong(3, authorId);
             statement.setString(4, authorName);
             statement.setString(5, content == null ? "" : content);
-            statement.setObject(6, createdAt);
+            database.bindTimestamp(statement, 6, createdAt);
             statement.executeUpdate();
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo archivar un mensaje del ticket", exception);
@@ -243,7 +243,7 @@ public final class TicketRepository {
                     messages.add(new TicketMessage(
                             result.getLong("message_id"), result.getLong("author_id"),
                             result.getString("author_name"), result.getString("content"),
-                            result.getObject("created_at", OffsetDateTime.class)));
+                            database.readTimestamp(result, "created_at")));
                 }
             }
             return messages;
@@ -260,10 +260,10 @@ public final class TicketRepository {
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     attachments.add(new TicketAttachment(
-                            result.getObject("message_id", Long.class), result.getLong("author_id"),
+                            Database.nullableLong(result, "message_id"), result.getLong("author_id"),
                             result.getString("kind"), result.getString("file_name"), result.getString("url"),
-                            result.getString("content_type"), result.getObject("size_bytes", Long.class),
-                            result.getObject("created_at", OffsetDateTime.class)));
+                            result.getString("content_type"), Database.nullableLong(result, "size_bytes"),
+                            database.readTimestamp(result, "created_at")));
                 }
             }
             return attachments;
@@ -274,15 +274,15 @@ public final class TicketRepository {
 
     private Ticket map(ResultSet result) throws SQLException {
         return new Ticket(
-                result.getLong("id"), result.getLong("guild_id"), result.getObject("channel_id", Long.class),
+                result.getLong("id"), result.getLong("guild_id"), Database.nullableLong(result, "channel_id"),
                 result.getLong("opener_id"), TicketType.valueOf(result.getString("type")),
                 result.getString("game_name"), result.getString("subject"), result.getString("description"),
-                result.getObject("accused_user_id", Long.class), result.getString("evidence"),
-                result.getString("status"), result.getObject("claimed_by", Long.class),
-                result.getObject("created_at", OffsetDateTime.class));
+                Database.nullableLong(result, "accused_user_id"), result.getString("evidence"),
+                result.getString("status"), Database.nullableLong(result, "claimed_by"),
+                database.readTimestamp(result, "created_at"));
     }
 
-    private static void insertAttachment(Connection connection, long ticketId, Long messageId, long authorId,
+    private void insertAttachment(Connection connection, long ticketId, Long messageId, long authorId,
                                          String kind, String fileName, String url, String contentType,
                                          Long sizeBytes, OffsetDateTime createdAt) throws SQLException {
         String sql = """
@@ -299,7 +299,7 @@ public final class TicketRepository {
             statement.setString(6, url);
             statement.setString(7, blankToNull(contentType));
             if (sizeBytes == null) statement.setNull(8, java.sql.Types.BIGINT); else statement.setLong(8, sizeBytes);
-            statement.setObject(9, createdAt);
+            database.bindTimestamp(statement, 9, createdAt);
             statement.executeUpdate();
         }
     }

@@ -40,6 +40,33 @@ class BotConfigTest {
         assertThrows(IllegalStateException.class, () -> BotConfig.from(values));
     }
 
+    @Test
+    void defaultsToSqliteWithoutDatabaseCredentials() {
+        Map<String, String> values = requiredValues();
+        values.remove("DB_URL");
+        values.remove("DB_USER");
+        values.remove("DB_PASSWORD");
+        BotConfig config = BotConfig.from(values);
+        assertEquals("jdbc:sqlite:data/ark-dinosauria.db", config.databaseUrl());
+        assertEquals("", config.databaseUser());
+        assertEquals("", config.databasePassword());
+        assertEquals(1, config.databasePoolSize());
+    }
+
+    @Test
+    void keepsPostgresCredentialsRequired() {
+        Map<String, String> values = requiredValues();
+        values.remove("DB_PASSWORD");
+        assertThrows(IllegalStateException.class, () -> BotConfig.from(values));
+    }
+
+    @Test
+    void rejectsUnsupportedDatabaseUrls() {
+        Map<String, String> values = requiredValues();
+        values.put("DB_URL", "jdbc:mysql://localhost/test");
+        assertThrows(IllegalStateException.class, () -> BotConfig.from(values));
+    }
+
     private static Map<String, String> requiredValues() {
         Map<String, String> values = new HashMap<>();
         values.put("DISCORD_TOKEN", "test-token");

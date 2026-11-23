@@ -48,7 +48,7 @@ public final class StrikeRepository {
                 strike.executeUpdate();
                 long strikeId;
                 try (ResultSet keys = strike.getGeneratedKeys()) {
-                    if (!keys.next()) throw new SQLException("PostgreSQL no devolvio el ID del strike");
+                    if (!keys.next()) throw new SQLException("El almacenamiento no devolvio el ID del strike");
                     strikeId = keys.getLong(1);
                 }
 
@@ -88,8 +88,8 @@ public final class StrikeRepository {
                     strikes.add(new Strike(
                             result.getLong("id"), result.getLong("user_id"), result.getInt("points"),
                             result.getString("reason"), result.getString("evidence_url"),
-                            result.getObject("source_ticket_id", Long.class), result.getLong("moderator_id"),
-                            result.getObject("created_at", OffsetDateTime.class)));
+                            Database.nullableLong(result, "source_ticket_id"), result.getLong("moderator_id"),
+                            database.readTimestamp(result, "created_at")));
                 }
             }
             return strikes;
@@ -100,7 +100,7 @@ public final class StrikeRepository {
 
     public boolean revoke(long guildId, long strikeId, long moderatorId, String reason) {
         String sql = """
-                UPDATE strikes SET active=false, revoked_at=NOW(), revoked_by=?, revoke_reason=?
+                UPDATE strikes SET active=false, revoked_at=CURRENT_TIMESTAMP, revoked_by=?, revoke_reason=?
                  WHERE id=? AND guild_id=? AND active=true
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {

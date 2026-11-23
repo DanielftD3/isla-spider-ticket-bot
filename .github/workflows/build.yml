@@ -36,6 +36,18 @@ jobs:
           path: target/isla-spider-ticket-bot.jar
           if-no-files-found: error
 
+      - name: Save free-hosting bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ark-dinosauria-hosting
+          include-hidden-files: true
+          path: |
+            target/isla-spider-ticket-bot.jar
+            scripts/start-low-memory.sh
+            .env.example
+            HOSTING_GRATIS.md
+          if-no-files-found: error
+
   postgres-integration:
     name: PostgreSQL · integration tests
     runs-on: ubuntu-latest
@@ -71,3 +83,6 @@ jobs:
 
       - name: Run unit and PostgreSQL tests
         run: mvn --batch-mode --no-transfer-progress verify
+
+      - name: Build deployment image
+        run: docker build -t ark-dinosauria-bot:ci .
