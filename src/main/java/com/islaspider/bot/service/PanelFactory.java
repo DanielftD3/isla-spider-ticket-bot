@@ -145,7 +145,6 @@ public final class PanelFactory {
                         """)
                 .addField("⚠️ Warns activos", String.valueOf(activeWarns), true)
                 .addField("👥 Usuarios sancionados", String.valueOf(sanctionedUsers), true)
-                .addField("💾 Almacenamiento", "PostgreSQL", true)
                 .setFooter("Los cambios se guardan automáticamente")
                 .setTimestamp(Instant.now())
                 .build();

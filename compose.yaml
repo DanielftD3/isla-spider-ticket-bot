@@ -1,0 +1,23 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    env_file: .env
+    environment:
+      DB_URL: jdbc:sqlite:/app/data/ark-dinosauria.db
+      TRANSCRIPT_DIR: /app/data/transcripts
+      JAVA_TOOL_OPTIONS: -Xms64m -Xmx256m -XX:MaxDirectMemorySize=64m
+    volumes:
+      - bot-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,exec,nosuid,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  bot-data:

@@ -49,6 +49,12 @@ public record BotConfig(
 
     static BotConfig from(Map<String, String> values) {
         long ticketLogChannelId = requiredId(values, "TICKET_LOG_CHANNEL_ID");
+        String databaseUrl = values.getOrDefault("DB_URL", "jdbc:sqlite:data/ark-dinosauria.db").trim();
+        if (databaseUrl.isBlank()) databaseUrl = "jdbc:sqlite:data/ark-dinosauria.db";
+        boolean sqlite = databaseUrl.startsWith("jdbc:sqlite:");
+        if (!sqlite && !databaseUrl.startsWith("jdbc:postgresql:")) {
+            throw new IllegalStateException("DB_URL debe usar jdbc:sqlite: o jdbc:postgresql:");
+        }
         return new BotConfig(
                 required(values, "DISCORD_TOKEN"),
                 requiredId(values, "GUILD_ID"),
@@ -60,10 +66,10 @@ public record BotConfig(
                 optionalId(values, "APPEAL_LOG_CHANNEL_ID", ticketLogChannelId),
                 requiredId(values, "STAFF_ROLE_ID"),
                 requiredId(values, "MOD_ROLE_ID"),
-                required(values, "DB_URL"),
-                required(values, "DB_USER"),
-                required(values, "DB_PASSWORD"),
-                integer(values, "DB_POOL_SIZE", 8),
+                databaseUrl,
+                sqlite ? "" : required(values, "DB_USER"),
+                sqlite ? "" : required(values, "DB_PASSWORD"),
+                integer(values, "DB_POOL_SIZE", sqlite ? 1 : 8),
                 Path.of(values.getOrDefault("TRANSCRIPT_DIR", "transcripts")),
                 bool(values, "DELETE_TICKET_CHANNEL_ON_CLOSE", true),
                 integer(values, "STRIKE_MUTE_THRESHOLD", 3),
