@@ -30,7 +30,7 @@ $LogDirectory = Join-Path $ProjectRoot "logs"
 New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
 $LogFile = Join-Path $LogDirectory "bot.log"
 $StartedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-"[$StartedAt] Iniciando Isla Spider Ticket Bot con $JavaPath" | Tee-Object -FilePath $LogFile -Append
+"[$StartedAt] Iniciando ARK Dinosauria Ticket Bot con $JavaPath" | Tee-Object -FilePath $LogFile -Append
 
 $PreviousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

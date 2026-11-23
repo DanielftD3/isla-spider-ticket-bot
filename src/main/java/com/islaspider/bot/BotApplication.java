@@ -45,7 +45,7 @@ public final class BotApplication {
                             GatewayIntent.GUILD_MESSAGES,
                             GatewayIntent.MESSAGE_CONTENT,
                             GatewayIntent.GUILD_MEMBERS))
-                    .setActivity(Activity.watching("tickets y moderación"))
+                    .setActivity(Activity.watching("ARK Dinosauria · tickets y moderación"))
                     .addEventListeners(
                             new TicketListener(config, tickets, permissions, panels, transcripts),
                             new MessageArchiveListener(config, tickets),
@@ -70,6 +70,12 @@ public final class BotApplication {
             jda.shutdownNow();
             database.close();
             throw exception;
+        }
+
+        if (!"ARK Dinosauria".equals(jda.getSelfUser().getName())) {
+            jda.getSelfUser().getManager().setName("ARK Dinosauria").queue(
+                    ignored -> System.out.println("Nombre del bot actualizado a ARK Dinosauria"),
+                    error -> System.err.println("No se pudo actualizar el nombre del bot: " + error.getMessage()));
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

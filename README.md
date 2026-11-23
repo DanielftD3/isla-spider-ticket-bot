@@ -1,4 +1,4 @@
-# Isla Spider Ticket Bot
+# ARK Dinosauria Ticket Bot
 
 A Java Discord bot for private support tickets, ticket ratings, HTML transcripts, appeals, and strike-based moderation.
 
