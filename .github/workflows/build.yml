@@ -46,6 +46,7 @@ jobs:
             scripts/start-low-memory.sh
             .env.example
             HOSTING_GRATIS.md
+            CONFIGURACION_DISCORD.md
           if-no-files-found: error
 
   postgres-integration:

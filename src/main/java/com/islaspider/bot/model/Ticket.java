@@ -15,5 +15,22 @@ public record Ticket(
         String evidence,
         String status,
         Long claimedBy,
-        OffsetDateTime createdAt
-) {}
+        OffsetDateTime createdAt,
+        Long closedBy,
+        String closeReason,
+        String transcriptPath,
+        OffsetDateTime closedAt
+) {
+    public boolean isResolvedAppeal() {
+        return type == TicketType.APPEAL && ("APPROVED".equals(status) || "REJECTED".equals(status));
+    }
+
+    public Ticket resolvedAppeal(long moderatorId, boolean approved, String reason) {
+        if (type != TicketType.APPEAL || !"OPEN".equals(status)) {
+            throw new IllegalStateException("Solo se puede resolver una apelación abierta");
+        }
+        return new Ticket(id, guildId, channelId, openerId, type, gameName, subject, description,
+                accusedUserId, evidence, approved ? "APPROVED" : "REJECTED", claimedBy, createdAt,
+                moderatorId, reason, null, OffsetDateTime.now());
+    }
+}

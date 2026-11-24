@@ -38,7 +38,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,6 +55,7 @@ public final class TicketListener extends ListenerAdapter {
     private final PermissionService permissions;
     private final PanelFactory panels;
     private final TranscriptService transcripts;
+    private final Set<Long> resolvingAppeals = ConcurrentHashMap.newKeySet();
 
     public TicketListener(BotConfig config, TicketRepository tickets, PermissionService permissions,
                           PanelFactory panels, TranscriptService transcripts) {
@@ -108,6 +111,10 @@ public final class TicketListener extends ListenerAdapter {
                 cancelTicketDeletion(event);
             } else if (id.startsWith("appeal:approve:") || id.startsWith("appeal:reject:")) {
                 openAppealDecisionModal(event);
+            } else if (id.startsWith("appeal:archive-confirm:")) {
+                archiveResolvedAppeal(event, true);
+            } else if (id.startsWith("appeal:archive:")) {
+                archiveResolvedAppeal(event, false);
             }
         } catch (RuntimeException exception) {
             if (!event.isAcknowledged()) event.reply("❌ " + safeMessage(exception)).setEphemeral(true).queue();
@@ -156,16 +163,10 @@ public final class TicketListener extends ListenerAdapter {
             event.getHook().editOriginal("⚠️ Ya tienes un ticket abierto de esta categoría.").queue();
             return;
         }
-        if (type == TicketType.APPEAL) {
-            createAppeal(event, guild, gameName, subject, description, evidence);
-            return;
-        }
-
-        Category category = guild.getCategoryById(config.ticketCategoryId());
-        Role staffRole = guild.getRoleById(config.staffRoleId());
-        Role modRole = guild.getRoleById(config.moderatorRoleId());
+        Category category = guild.getCategoryById(config.categoryIdFor(type));
+        Role responsibleRole = guild.getRoleById(config.responsibleRoleIdFor(type));
         Member opener = event.getMember();
-        if (category == null || staffRole == null || modRole == null || opener == null) {
+        if (category == null || responsibleRole == null || opener == null) {
             event.getHook().editOriginal("❌ La categoría o los roles del bot no están bien configurados.").queue();
             return;
         }
@@ -174,71 +175,83 @@ public final class TicketListener extends ListenerAdapter {
                 Permission.MESSAGE_HISTORY, Permission.MESSAGE_ATTACH_FILES, Permission.MESSAGE_EMBED_LINKS);
         EnumSet<Permission> staffAllowed = EnumSet.copyOf(userAllowed);
         staffAllowed.add(Permission.MESSAGE_MANAGE);
-        Role responsibleRole = type == TicketType.REPORT ? modRole : staffRole;
+        EnumSet<Permission> botAllowed = EnumSet.copyOf(staffAllowed);
+        botAllowed.add(Permission.MANAGE_CHANNEL);
+        long ticketId = tickets.create(guild.getIdLong(), null, event.getUser().getIdLong(),
+                type, gameName, subject, description, accusedId, evidence, extractLinks(evidence));
 
-        var action = guild.createTextChannel(channelName(type, event.getUser()), category)
-                .addPermissionOverride(guild.getPublicRole(), null, EnumSet.of(Permission.VIEW_CHANNEL))
-                .addPermissionOverride(opener, userAllowed, null)
-                .addPermissionOverride(responsibleRole, staffAllowed, null);
+        try {
+            var action = guild.createTextChannel(type.channelName(ticketId), category)
+                    .clearPermissionOverrides()
+                    .addPermissionOverride(guild.getPublicRole(), null, EnumSet.of(Permission.VIEW_CHANNEL))
+                    .addPermissionOverride(opener, userAllowed, null)
+                    .addPermissionOverride(responsibleRole, staffAllowed, null)
+                    .addPermissionOverride(guild.getSelfMember(), botAllowed, null)
+                    .setTopic("Caso #" + ticketId + " · " + type.label() + " · Usuario " + opener.getId());
 
-        Long finalAccusedId = accusedId;
-        action.queue(channel -> {
-            try {
-                long ticketId = tickets.create(guild.getIdLong(), channel.getIdLong(), event.getUser().getIdLong(),
-                        type, gameName, subject, description, finalAccusedId, evidence, extractLinks(evidence));
-                channel.sendMessage(event.getUser().getAsMention() + " " + responsibleRole.getAsMention())
-                        .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
-                                description, finalAccusedId, evidence))
-                        .setComponents(panels.ticketControls())
-                        .queue(message -> event.getHook().editOriginal("✅ Ticket creado: " + channel.getAsMention()).queue(),
-                                error -> {
-                                    markFailedQuietly(ticketId, "Discord no permitió publicar el mensaje inicial");
-                                    channel.delete().reason("No se pudo publicar el mensaje inicial").queue(null, ignored -> {});
-                                    event.getHook().editOriginal("❌ No se pudo publicar el ticket: "
-                                            + safeMessage(error)).queue();
-                                });
-            } catch (RuntimeException exception) {
-                channel.delete().reason("Error al guardar el ticket").queue(null, ignored -> {});
-                event.getHook().editOriginal("❌ No se pudo guardar el ticket: " + safeMessage(exception)).queue();
-            }
-        }, error -> event.getHook().editOriginal("❌ Discord no permitió crear el canal: " + error.getMessage()).queue());
+            Long finalAccusedId = accusedId;
+            action.queue(channel -> {
+                try {
+                    if (!tickets.attachChannel(ticketId, channel.getIdLong())) {
+                        throw new IllegalStateException("El caso ya no está disponible para vincular su canal");
+                    }
+                    channel.sendMessage(event.getUser().getAsMention() + " " + responsibleRole.getAsMention())
+                            .setEmbeds(ticketCreatedEmbed(ticketId, type, event.getUser(), gameName, subject,
+                                    description, finalAccusedId, evidence))
+                            .setComponents(type == TicketType.APPEAL ? panels.appealControls(ticketId) : panels.ticketControls())
+                            .queue(message -> {
+                                event.getHook().editOriginal("✅ Caso **#" + ticketId + "** creado: " + channel.getAsMention()).queue();
+                                try {
+                                    logCaseOpened(guild, tickets.findById(ticketId).orElseThrow(), channel);
+                                } catch (RuntimeException exception) {
+                                    System.err.println("No se pudo registrar la apertura del caso #" + ticketId
+                                            + ": " + safeMessage(exception));
+                                }
+                            },
+                                    error -> {
+                                        markFailedQuietly(ticketId, "Discord no permitió publicar el mensaje inicial");
+                                        channel.delete().reason("No se pudo publicar el mensaje inicial").queue(null, ignored -> {});
+                                        event.getHook().editOriginal("❌ No se pudo publicar el ticket: "
+                                                + safeMessage(error)).queue();
+                                    });
+                } catch (RuntimeException exception) {
+                    markFailedQuietly(ticketId, "No se pudo completar la creación del caso");
+                    channel.delete().reason("Error al guardar el ticket").queue(null, ignored -> {});
+                    event.getHook().editOriginal("❌ No se pudo guardar el ticket: " + safeMessage(exception)).queue();
+                }
+            }, error -> {
+                markFailedQuietly(ticketId, "Discord no permitió crear el canal");
+                event.getHook().editOriginal("❌ Discord no permitió crear el canal: " + safeMessage(error)
+                        + ". Puedes volver a intentarlo.").queue();
+            });
+        } catch (RuntimeException exception) {
+            markFailedQuietly(ticketId, "Discord rechazó la configuración del canal");
+            throw exception;
+        }
     }
 
-    private void createAppeal(ModalInteractionEvent event, Guild guild, String gameName, String subject,
-                              String description, String evidence) {
-        long ticketId = tickets.create(guild.getIdLong(), null, event.getUser().getIdLong(), TicketType.APPEAL,
-                gameName, subject, description, null, evidence, extractLinks(evidence));
-        TextChannel log = guild.getTextChannelById(config.appealLogChannelId());
+    private void logCaseOpened(Guild guild, Ticket ticket, TextChannel channel) {
+        TextChannel log = guild.getTextChannelById(ticket.type() == TicketType.APPEAL
+                ? config.appealLogChannelId() : config.ticketLogChannelId());
         if (log == null) {
-            markFailedQuietly(ticketId, "El canal de apelaciones no existe");
-            event.getHook().editOriginal("❌ No existe el canal configurado para apelaciones.").queue();
+            System.err.println("No existe el canal de registro para el caso #" + ticket.id());
             return;
         }
         log.sendMessageEmbeds(new EmbedBuilder()
-                        .setColor(new Color(245, 166, 35))
-                        .setTitle("⚖️ Nueva apelación #" + ticketId)
-                        .addField("Usuario", event.getUser().getAsMention() + " (`" + event.getUser().getId() + "`)", false)
-                        .addField("Nombre en el juego", gameName, true)
-                        .addField("Sanción", subject, true)
-                        .addField("Explicación", truncate(description, 1000), false)
-                        .addField("Pruebas", evidence.isBlank() ? "Sin enlaces" : truncate(evidence, 1000), false)
+                        .setColor(new Color(88, 101, 242))
+                        .setTitle("📂 Apertura de caso #" + ticket.id())
+                        .addField("Tipo", ticket.type().label(), true)
+                        .addField("Usuario", "<@" + ticket.openerId() + ">", true)
+                        .addField("Canal privado", channel.getAsMention(), true)
+                        .addField("Asunto", truncate(ticket.subject(), 150), false)
+                        .addField("Equipo responsable", "<@&" + config.responsibleRoleIdFor(ticket.type()) + ">", true)
                         .setTimestamp(OffsetDateTime.now())
                         .build())
                 .setComponents(ActionRow.of(
-                        net.dv8tion.jda.api.components.buttons.Button.success("appeal:approve:" + ticketId, "Aprobar"),
-                        net.dv8tion.jda.api.components.buttons.Button.danger("appeal:reject:" + ticketId, "Rechazar")))
-                .queue(message -> {
-                    event.getUser().openPrivateChannel()
-                            .flatMap(channel -> channel.sendMessage("⚖️ Recibimos tu apelación **#" + ticketId
-                                    + "**. Te responderemos por este medio."))
-                            .queue(null, ignored -> {});
-                    event.getHook().editOriginal("✅ Apelación #" + ticketId
-                            + " enviada. La respuesta llegará por mensaje privado.").queue();
-                }, error -> {
-                    markFailedQuietly(ticketId, "Discord no permitió publicar la apelación");
-                    event.getHook().editOriginal("❌ No se pudo publicar la apelación: "
-                            + safeMessage(error) + ". Puedes volver a intentarlo.").queue();
-                });
+                        net.dv8tion.jda.api.components.buttons.Button.link(
+                                "https://discord.com/channels/" + guild.getId() + "/" + channel.getId(), "Abrir caso")))
+                .queue(null, error -> System.err.println("No se pudo publicar la apertura del caso #"
+                        + ticket.id() + ": " + safeMessage(error)));
     }
 
     private void requestTicketDeletion(ButtonInteractionEvent event) {
@@ -247,6 +260,8 @@ public final class TicketListener extends ListenerAdapter {
             return;
         }
         Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        requireOrdinaryTicket(ticket);
+        requireTicketManager(event.getMember(), ticket);
         if (!"OPEN".equals(ticket.status())) {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
@@ -275,6 +290,8 @@ public final class TicketListener extends ListenerAdapter {
             return;
         }
         Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        requireOrdinaryTicket(ticket);
+        requireTicketManager(event.getMember(), ticket);
         if (!"OPEN".equals(ticket.status())) {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
@@ -314,7 +331,7 @@ public final class TicketListener extends ListenerAdapter {
                             }
                         } catch (RuntimeException exception) {
                             deleteMessages(archivedMessages);
-                            hook.editOriginal("❌ PostgreSQL no permitió cerrar el ticket: "
+                            hook.editOriginal("❌ No se pudo guardar el cierre del ticket: "
                                     + safeMessage(exception)
                                     + ". El canal se conservará para reintentarlo.").queue();
                             return;
@@ -343,6 +360,8 @@ public final class TicketListener extends ListenerAdapter {
             return;
         }
         Ticket ticket = requireChannelTicket(event.getChannel().getIdLong());
+        requireOrdinaryTicket(ticket);
+        requireTicketManager(event.getMember(), ticket);
         if (!"OPEN".equals(ticket.status())) {
             event.reply("⚠️ Este ticket ya está cerrado.").setEphemeral(true).queue();
             return;
@@ -378,6 +397,7 @@ public final class TicketListener extends ListenerAdapter {
         long staffId = Long.parseUnsignedLong(event.getValues().getFirst());
         Ticket ticket = tickets.findById(ticketId)
                 .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
+        requireOrdinaryTicket(ticket);
         if (ticket.openerId() != event.getUser().getIdLong()) {
             event.reply("❌ Solo quien abrió el ticket puede seleccionar al administrador.")
                     .setEphemeral(true).queue();
@@ -417,6 +437,7 @@ public final class TicketListener extends ListenerAdapter {
         String comment = value(event, "comment");
         Ticket ticket = tickets.findById(ticketId)
                 .orElseThrow(() -> new IllegalStateException("El ticket no existe"));
+        requireOrdinaryTicket(ticket);
         if (ticket.openerId() != event.getUser().getIdLong()) {
             event.reply("❌ Solo quien abrió el ticket puede responder la encuesta.").setEphemeral(true).queue();
             return;
@@ -464,7 +485,7 @@ public final class TicketListener extends ListenerAdapter {
                             }
                         } catch (RuntimeException exception) {
                             deleteMessages(archivedMessages);
-                            hook.editOriginal("❌ PostgreSQL no permitió cerrar el ticket: "
+                            hook.editOriginal("❌ No se pudo guardar el cierre del ticket: "
                                     + safeMessage(exception) + ". El canal se conservará para reintentarlo.").queue();
                             return;
                         }
@@ -516,9 +537,12 @@ public final class TicketListener extends ListenerAdapter {
                 : "<@" + ticket.claimedBy() + ">";
 
         List<CompletableFuture<Message>> uploads = new ArrayList<>();
-        uploads.add(log.sendMessageEmbeds(new EmbedBuilder()
+        uploads.add(submitArchive(() -> log.sendMessageEmbeds(new EmbedBuilder()
                         .setColor(new Color(87, 242, 135))
-                        .setTitle("Ticket cerrado")
+                        .setTitle(ticket.isResolvedAppeal()
+                                ? "⚖️ Caso #" + ticket.id() + " · " + appealResult(ticket)
+                                : "Ticket cerrado")
+                        .addField("Tipo de caso", ticket.type().label(), true)
                         .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
                         .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
                         .addField("⛔ Cerrado por", "<@" + closedBy + ">", true)
@@ -527,11 +551,11 @@ public final class TicketListener extends ListenerAdapter {
                         .addField("❓ Motivo", truncate(reason, 1000), false)
                         .setTimestamp(OffsetDateTime.now())
                         .build())
-                .submit());
+                .submit()));
 
-        CompletableFuture<Message> transcriptUpload = transcriptLog.sendMessageEmbeds(new EmbedBuilder()
+        CompletableFuture<Message> transcriptUpload = submitArchive(() -> transcriptLog.sendMessageEmbeds(new EmbedBuilder()
                         .setColor(new Color(87, 242, 135))
-                        .setTitle("Copia archivada de transcripción")
+                        .setTitle("Copia archivada de transcripción · Caso #" + ticket.id())
                         .addField("🎟️ Ticket ID", String.valueOf(ticket.id()), true)
                         .addField("✅ Abierto por", "<@" + ticket.openerId() + ">", true)
                         .addField("⛔ Generada por", "<@" + closedBy + ">", true)
@@ -554,7 +578,7 @@ public final class TicketListener extends ListenerAdapter {
                                             transcriptUrl, "Ver transcripción")))
                             .submit()
                             .exceptionally(ignored -> message);
-                });
+                }));
         uploads.add(transcriptUpload);
         return uploads;
     }
@@ -567,6 +591,12 @@ public final class TicketListener extends ListenerAdapter {
         String[] parts = event.getComponentId().split(":");
         String decision = parts[1];
         long ticketId = Long.parseLong(parts[2]);
+        Ticket ticket = requireAppeal(event.getGuild(), ticketId);
+        requireIndependentReviewer(ticket, event.getUser().getIdLong());
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Este caso ya fue resuelto.").setEphemeral(true).queue();
+            return;
+        }
         Modal modal = Modal.create(APPEAL_DECISION_PREFIX + decision + ":" + ticketId,
                         "Resolver apelación")
                 .addComponents(label("Motivo de la decisión", "decision-reason", TextInputStyle.PARAGRAPH,
@@ -581,36 +611,177 @@ public final class TicketListener extends ListenerAdapter {
             return;
         }
         String[] parts = decisionAndId.split(":");
+        if (parts.length != 2 || !("approve".equals(parts[0]) || "reject".equals(parts[0]))) {
+            throw new IllegalArgumentException("Decisión de apelación no válida");
+        }
         boolean approved = "approve".equals(parts[0]);
         long ticketId = Long.parseLong(parts[1]);
         String reason = value(event, "decision-reason");
+        Ticket ticket = requireAppeal(event.getGuild(), ticketId);
+        requireIndependentReviewer(ticket, event.getUser().getIdLong());
+        if (!"OPEN".equals(ticket.status())) {
+            event.reply("⚠️ Esta apelación ya fue resuelta.").setEphemeral(true).queue();
+            return;
+        }
+        if (!resolvingAppeals.add(ticketId)) {
+            event.reply("⏳ Moderación ya está guardando una resolución para este caso.").setEphemeral(true).queue();
+            return;
+        }
         event.deferReply(true).queue(hook -> {
+            final Ticket resolution;
+            final Path transcript;
+            final List<CompletableFuture<Message>> uploads;
             try {
-                Ticket ticket = tickets.findById(ticketId)
-                        .orElseThrow(() -> new IllegalStateException("La apelación no existe"));
-                if (!"OPEN".equals(ticket.status())
-                        || !tickets.resolveAppeal(ticketId, event.getUser().getIdLong(), approved, reason)) {
-                    hook.editOriginal("⚠️ Esta apelación ya fue resuelta.").queue();
-                    return;
+                Guild guild = requireGuild(event.getGuild());
+                if (ticket.channelId() != null) requireTextChannel(guild, ticket.channelId(), "el caso de apelación");
+                resolution = ticket.resolvedAppeal(event.getUser().getIdLong(), approved, reason);
+                transcript = transcripts.generate(resolution);
+                // Guardamos las copias antes de confirmar el estado final en la base de datos.
+                requireTextChannel(guild, config.appealLogChannelId(), "resoluciones de apelaciones");
+                uploads = uploadManualClosureArchive(guild, resolution, event.getUser().getIdLong(), reason, transcript);
+                if (config.appealLogChannelId() != config.ticketLogChannelId()) {
+                    uploads.add(submitArchive(() -> guild.getTextChannelById(config.appealLogChannelId())
+                            .sendMessageEmbeds(appealResolutionEmbed(resolution)).submit()));
                 }
-                String result = approved ? "APROBADA ✅" : "RECHAZADA ❌";
-                event.getJDA().retrieveUserById(ticket.openerId()).submit()
-                        .thenCompose(user -> user.openPrivateChannel().submit())
-                        .thenCompose(channel -> channel.sendMessage("⚖️ Tu apelación **#" + ticketId
-                                + "** fue **" + result + "**.\n**Motivo:** " + reason).submit())
-                        .whenComplete((message, dmError) -> {
-                            if (dmError == null) {
-                                hook.editOriginal("✅ Apelación #" + ticketId + " " + result
-                                        + ". El usuario fue notificado por privado.").queue();
-                            } else {
-                                hook.editOriginal("✅ Apelación #" + ticketId + " " + result
-                                        + ", pero el usuario tiene los mensajes privados cerrados.").queue();
-                            }
-                        });
             } catch (RuntimeException exception) {
-                hook.editOriginal("❌ " + safeMessage(exception)).queue();
+                resolvingAppeals.remove(ticketId);
+                hook.editOriginal("❌ No se resolvió el caso: " + safeMessage(exception)
+                        + ". Se conserva abierto para reintentarlo.").queue();
+                return;
             }
+
+            CompletableFuture.allOf(uploads.toArray(CompletableFuture[]::new))
+                    .whenComplete((unused, uploadError) -> {
+                        try {
+                            if (uploadError != null) {
+                                deleteMessages(successfulMessages(uploads));
+                                hook.editOriginal("❌ No se resolvió el caso porque no se pudieron guardar todos los registros: "
+                                        + safeMessage(rootCause(uploadError)) + ". Se conserva abierto.").queue();
+                                return;
+                            }
+                            if (!tickets.resolveAppeal(ticketId, event.getUser().getIdLong(), approved, reason,
+                                    transcript.toString())) {
+                                deleteMessages(successfulMessages(uploads));
+                                hook.editOriginal("⚠️ Este caso ya fue resuelto. No se guardó una segunda decisión.").queue();
+                                return;
+                            }
+                        } catch (RuntimeException exception) {
+                            deleteMessages(successfulMessages(uploads));
+                            hook.editOriginal("❌ No se pudo guardar la resolución: " + safeMessage(exception)
+                                    + ". El canal se conserva para reintentarlo.").queue();
+                            return;
+                        } finally {
+                            resolvingAppeals.remove(ticketId);
+                        }
+
+                        if (event.getMessage() != null) {
+                            event.getMessage().editMessageComponents().queue(null, ignored -> {});
+                        }
+                        TextChannel channel = ticket.channelId() == null ? null
+                                : event.getGuild().getTextChannelById(ticket.channelId());
+                        if (channel != null) {
+                            submitArchive(() -> channel.sendMessageEmbeds(appealResolutionEmbed(resolution))
+                                    .setComponents(panels.resolvedAppealControls(ticketId)).submit())
+                                    .whenComplete((message, error) -> {
+                                        if (error == null) hook.editOriginal("✅ Caso **#" + ticketId + "** "
+                                                    + appealResult(resolution) + ". Resolución publicada y transcripción guardada. "
+                                                    + "El canal queda disponible hasta que Moderación lo archive.").queue();
+                                        else hook.editOriginal("⚠️ La resolución y la transcripción se guardaron, "
+                                                    + "pero no se pudo publicar la respuesta en el canal: " + safeMessage(error)
+                                                    + ". Revisa los registros antes de eliminarlo.").queue();
+                                    });
+                            channel.getManager().putMemberPermissionOverride(ticket.openerId(),
+                                            EnumSet.of(Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY),
+                                            EnumSet.of(Permission.MESSAGE_SEND))
+                                    .setName((approved ? "aprobada-" : "rechazada-")
+                                            + TicketType.APPEAL.channelName(ticketId))
+                                    .setTopic("Caso #" + ticketId + " · " + appealResult(resolution))
+                                    .queue(null, ignored -> {});
+                        } else {
+                            hook.editOriginal("✅ Caso **#" + ticketId + "** " + appealResult(resolution)
+                                    + ". Resolución y transcripción guardadas.").queue();
+                        }
+                        event.getJDA().retrieveUserById(ticket.openerId()).submit()
+                                .thenCompose(user -> user.openPrivateChannel().submit())
+                                .thenCompose(dm -> dm.sendMessage("⚖️ Tu apelación **#" + ticketId + "** fue **"
+                                        + appealResult(resolution) + "**.\n**Motivo:** " + reason).submit())
+                                .exceptionally(ignored -> null);
+                    });
+        }, error -> resolvingAppeals.remove(ticketId));
+    }
+
+    private void archiveResolvedAppeal(ButtonInteractionEvent event, boolean confirmed) {
+        if (!permissions.isModerator(event.getMember())) {
+            event.reply("❌ Solo Moderación puede archivar un caso de apelación.").setEphemeral(true).queue();
+            return;
+        }
+        long caseId = Long.parseLong(event.getComponentId().split(":")[2]);
+        Ticket ticket = requireAppeal(event.getGuild(), caseId);
+        if (!ticket.isResolvedAppeal() || ticket.transcriptPath() == null || ticket.transcriptPath().isBlank()) {
+            event.reply("❌ Primero resuelve y guarda la transcripción del caso.").setEphemeral(true).queue();
+            return;
+        }
+        if (ticket.channelId() == null || ticket.channelId() != event.getChannel().getIdLong()) {
+            throw new IllegalStateException("Archiva el caso desde su propio canal");
+        }
+        if (!confirmed) {
+            event.reply("¿Eliminar el canal de este caso resuelto? La resolución y su transcripción se conservarán en los registros.")
+                    .setEphemeral(true).setComponents(ActionRow.of(
+                            net.dv8tion.jda.api.components.buttons.Button.danger(
+                                    "appeal:archive-confirm:" + caseId, "Confirmar archivo del canal"))).queue();
+            return;
+        }
+        event.deferEdit().queue(hook -> {
+            hook.editOriginal("✅ El canal se eliminará en 5 segundos. El expediente queda guardado.")
+                    .setComponents().queue();
+            event.getChannel().asTextChannel().delete().reason("Caso de apelación #" + caseId + " resuelto y archivado")
+                    .queueAfter(5, TimeUnit.SECONDS, ignored -> {}, error -> hook.editOriginal(
+                            "❌ Discord no permitió eliminar el canal: " + safeMessage(error)).queue());
         });
+    }
+
+    private Ticket requireAppeal(Guild guild, long caseId) {
+        requireGuild(guild);
+        Ticket ticket = tickets.findById(caseId)
+                .orElseThrow(() -> new IllegalStateException("La apelación no existe"));
+        if (ticket.guildId() != guild.getIdLong() || ticket.type() != TicketType.APPEAL) {
+            throw new IllegalStateException("El caso no es una apelación de este servidor");
+        }
+        return ticket;
+    }
+
+    private static void requireIndependentReviewer(Ticket ticket, long moderatorId) {
+        if (ticket.openerId() == moderatorId) {
+            throw new IllegalStateException("Otro moderador debe revisar tu propia apelación");
+        }
+    }
+
+    private static String appealResult(Ticket ticket) {
+        return "APPROVED".equals(ticket.status()) ? "APROBADA ✅" : "RECHAZADA ❌";
+    }
+
+    private net.dv8tion.jda.api.entities.MessageEmbed appealResolutionEmbed(Ticket ticket) {
+        return new EmbedBuilder()
+                .setColor("APPROVED".equals(ticket.status()) ? new Color(87, 242, 135) : new Color(237, 66, 69))
+                .setTitle("⚖️ Resolución del caso #" + ticket.id() + " · " + appealResult(ticket))
+                .addField("Solicitante", "<@" + ticket.openerId() + ">", true)
+                .addField("Resuelto por", "<@" + ticket.closedBy() + ">", true)
+                .addField("Sanción o referencia", truncate(ticket.subject(), 150), false)
+                .setDescription("**Motivo:**\n" + ticket.closeReason())
+                .setFooter("La decisión queda registrada. Moderación debe aplicar cualquier cambio a la sanción correspondiente.")
+                .setTimestamp(ticket.closedAt()).build();
+    }
+
+    private static void requireOrdinaryTicket(Ticket ticket) {
+        if (ticket.type() == TicketType.APPEAL) {
+            throw new IllegalStateException("Las apelaciones deben resolverse con Aprobar o Rechazar y un motivo");
+        }
+    }
+
+    private void requireTicketManager(Member member, Ticket ticket) {
+        if (!permissions.canManageTicket(member, ticket)) {
+            throw new IllegalStateException("Solo el equipo responsable puede gestionar este caso");
+        }
     }
 
     private Ticket requireChannelTicket(long channelId) {
@@ -632,9 +803,7 @@ public final class TicketListener extends ListenerAdapter {
     private boolean canAttend(Ticket ticket, Member member) {
         if (member == null || member.getUser().isBot()) return false;
         if (member.hasPermission(Permission.ADMINISTRATOR)) return true;
-        long roleId = ticket.type() == TicketType.REPORT
-                ? config.moderatorRoleId()
-                : config.staffRoleId();
+        long roleId = config.responsibleRoleIdFor(ticket.type());
         return member.getRoles().stream().anyMatch(role -> role.getIdLong() == roleId);
     }
 
@@ -653,6 +822,14 @@ public final class TicketListener extends ListenerAdapter {
             }
         }
         return messages;
+    }
+
+    private static CompletableFuture<Message> submitArchive(Supplier<CompletableFuture<Message>> upload) {
+        try {
+            return upload.get();
+        } catch (RuntimeException exception) {
+            return CompletableFuture.failedFuture(exception);
+        }
     }
 
     private static void deleteMessages(List<Message> messages) {
@@ -703,13 +880,6 @@ public final class TicketListener extends ListenerAdapter {
         }
     }
 
-    private static String channelName(TicketType type, User user) {
-        String safe = user.getName().toLowerCase().replaceAll("[^a-z0-9-]", "");
-        if (safe.isBlank()) safe = "usuario";
-        if (safe.length() > 30) safe = safe.substring(0, 30);
-        return type.channelPrefix() + "-" + safe + "-" + user.getId().substring(Math.max(0, user.getId().length() - 4));
-    }
-
     private net.dv8tion.jda.api.entities.MessageEmbed ticketCreatedEmbed(long id, TicketType type, User creator, String gameName,
                                                                           String subject, String description,
                                                                           Long accusedId, String evidence) {
@@ -719,20 +889,23 @@ public final class TicketListener extends ListenerAdapter {
             case REPORT -> "🚨";
             case APPEAL -> "⚖️";
         };
-        long responsibleRole = type == TicketType.REPORT ? config.moderatorRoleId() : config.staffRoleId();
+        long responsibleRole = config.responsibleRoleIdFor(type);
         EmbedBuilder embed = new EmbedBuilder().setColor(new Color(30, 190, 120))
-                .setTitle(emoji + " Ticket: " + type.label())
-                .setDescription("Tu solicitud ha sido recibida. Describe el caso con el mayor detalle posible para que podamos ayudarte más rápido.")
+                .setTitle(emoji + " Caso #" + id + " · " + type.label())
+                .setDescription("**" + subject + "**\n\n" + description)
                 .addField("👤 Creador", creator.getAsMention(), true)
                 .addField("🎮 Nombre en el juego", gameName, true)
                 .addField("🛡️ Equipo responsable", "<@&" + responsibleRole + ">", true)
-                .addField("📝 Qué ha sucedido", "**" + truncate(subject, 140) + "**\n" + truncate(description, 850), false);
+                .addField("📌 Estado", "Abierto · En revisión", true);
         if (accusedId != null) embed.addField("Jugador reportado", "<@" + accusedId + "> (`" + accusedId + "`)", false);
         if (!evidence.isBlank()) embed.addField("Pruebas iniciales", truncate(evidence, 1000), false);
         return embed
                 .addField("📌 Qué incluir", "**Explicación detallada, pruebas, capturas y cualquier dato relevante.** "
                         + "Las pruebas deben ser grabadas con Medal o cualquier otra aplicación de grabación.", false)
-                .addField("⭐ Al finalizar", "El equipo puede enviarte una encuesta. Si la completas, el ticket se cerrará automáticamente.", false)
+                .addField(type == TicketType.APPEAL ? "⚖️ Resolución" : "⭐ Al finalizar",
+                        type == TicketType.APPEAL
+                                ? "Moderación revisará el caso y publicará una decisión con su motivo. Puedes añadir pruebas mientras está abierto."
+                                : "El equipo puede enviarte una encuesta. Si la completas, el ticket se cerrará automáticamente.", false)
                 .setFooter("Ticket #" + id + " · No menciones al equipo repetidamente; te atenderán lo antes posible.")
                 .setTimestamp(OffsetDateTime.now()).build();
     }

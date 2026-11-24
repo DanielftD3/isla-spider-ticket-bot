@@ -13,6 +13,7 @@ import java.sql.Statement;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,7 +30,7 @@ class PostgresIntegrationTest {
         assumeTrue(url != null && !url.isBlank(), "PostgreSQL de integración no configurado");
         String user = System.getenv().getOrDefault("TEST_DB_USER", "postgres");
         String password = System.getenv().getOrDefault("TEST_DB_PASSWORD", "postgres");
-        BotConfig config = new BotConfig("test-token", 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        BotConfig config = new BotConfig("test-token", 1, 2, 2, 3, 4, 5, 6, 7, 8, 9,
                 url, user, password, 2, Path.of("target", "test-transcripts"),
                 true, 3, 5, 24, false);
         database = new Database(config);
@@ -130,8 +131,16 @@ class PostgresIntegrationTest {
         long ticketId = tickets.create(1, null, 202, TicketType.APPEAL, "Jugador",
                 "Apelar ban", "Descripción suficientemente detallada", null, "", List.of());
 
-        assertTrue(tickets.resolveAppeal(ticketId, 900, true, "Apelación aceptada"));
+        assertTrue(tickets.attachChannel(ticketId, 8100));
+        assertFalse(tickets.attachChannel(ticketId, 8101));
+        assertFalse(tickets.close(ticketId, 900, "Sin revisión", "incorrecto.html"));
+        assertTrue(tickets.resolveAppeal(ticketId, 900, true, "Apelación aceptada", "caso.html"));
         assertFalse(tickets.resolveAppeal(ticketId, 901, false, "Decisión tardía"));
+        var resolution = tickets.findByChannel(8100).orElseThrow();
+        assertEquals(900L, resolution.closedBy());
+        assertEquals("Apelación aceptada", resolution.closeReason());
+        assertEquals("caso.html", resolution.transcriptPath());
+        assertNotNull(resolution.closedAt());
     }
 
     @Test

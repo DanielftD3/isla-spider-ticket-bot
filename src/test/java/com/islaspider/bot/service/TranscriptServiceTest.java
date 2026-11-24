@@ -18,7 +18,7 @@ class TranscriptServiceTest {
         OffsetDateTime now = OffsetDateTime.parse("2026-09-06T00:00:00Z");
         Ticket ticket = new Ticket(42, 1, 2L, 3, TicketType.REPORT, "Jugador <uno>",
                 "Reporte", "Descripción <script>alert(1)</script>", 987654321012345678L,
-                "Prueba: https://example.com/video?a=1&b=2", "OPEN", null, now);
+                "Prueba: https://example.com/video?a=1&b=2", "OPEN", null, now, null, null, null, null);
         List<TicketMessage> messages = List.of(
                 new TicketMessage(100, 3, "Usuario <admin>", "Mensaje <b>sin formato</b>", now));
         List<TicketAttachment> attachments = List.of(
@@ -39,5 +39,25 @@ class TranscriptServiceTest {
         assertTrue(html.contains("Mensaje &lt;b&gt;sin formato&lt;/b&gt;"));
         assertFalse(html.contains("https://cdn.example/original.png"));
         assertFalse(html.contains("<script>alert(1)</script>"));
+    }
+
+    @Test
+    void preservesAppealDecisionReviewerReasonAndConversationInTheCaseFile() {
+        OffsetDateTime now = OffsetDateTime.parse("2026-11-24T12:00:00Z");
+        Ticket open = new Ticket(7, 1, 2L, 3, TicketType.APPEAL, "Jugador", "Warn #17",
+                "Solicito revisar las pruebas", null, "Video inicial", "OPEN", null, now,
+                null, null, null, null);
+        Ticket resolved = open.resolvedAppeal(900, false, "Falta contexto <script>\nSegunda línea");
+        String html = TranscriptService.render(resolved, List.of(
+                new TicketMessage(100, 3, "Jugador", "Prueba adicional", now)), List.of());
+        assertTrue(html.contains("Resolución del caso #7"));
+        assertTrue(html.contains("RECHAZADA"));
+        assertTrue(html.contains("900"));
+        assertTrue(html.contains("Falta contexto &lt;script&gt;<br>Segunda línea"));
+        assertTrue(html.contains("Warn #17"));
+        assertTrue(html.contains("Prueba adicional"));
+        assertFalse(html.contains("<script>"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> resolved.resolvedAppeal(901, true, "Otra decisión"));
     }
 }
