@@ -29,7 +29,7 @@ class SqliteIntegrationTest {
     }
 
     private Database open() {
-        BotConfig config = new BotConfig("test-token", 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        BotConfig config = new BotConfig("test-token", 1, 2, 2, 3, 4, 5, 6, 7, 8, 9,
                 "jdbc:sqlite:" + directory.resolve("nested/bot.db"), "", "", 8,
                 directory.resolve("transcripts"), true, 3, 5, 24, false);
         Database storage = new Database(config);
@@ -123,6 +123,61 @@ class SqliteIntegrationTest {
         assertTrue(tickets.close(manual, 900, "Cierre manual", "ticket.html"));
         assertFalse(tickets.close(manual, 900, "Repetido", "ticket.html"));
         assertTrue(tickets.failOpen(create(402), "No se pudo crear el canal"));
+    }
+
+    @Test
+    void persistsNumberedAppealChannelAndResolutionAcrossRestart() {
+        long appeal = tickets.create(1, null, 410, TicketType.APPEAL, "Jugador",
+                "Warn #17", "Solicito revisar las pruebas", null, "", List.of());
+        assertTrue(tickets.attachChannel(appeal, 8001));
+        assertFalse(tickets.attachChannel(appeal, 8002));
+        assertEquals(appeal, tickets.findByChannel(8001).orElseThrow().id());
+        assertFalse(tickets.close(appeal, 900, "No revisar", "incorrecto.html"));
+        assertFalse(tickets.completeFeedbackAndClose(appeal, 410, 900, 10, 10,
+                "Encuesta antigua", "Sin decisión", "incorrecto.html"));
+        assertEquals("OPEN", tickets.findById(appeal).orElseThrow().status());
+        assertTrue(tickets.resolveAppeal(appeal, 900, true, "Las pruebas justifican la apelación", "caso.html"));
+        assertFalse(tickets.resolveAppeal(appeal, 901, false, "Decisión repetida", "otro.html"));
+        database.close();
+        database = open();
+        tickets = new TicketRepository(database);
+        var resolved = tickets.findByChannel(8001).orElseThrow();
+        assertTrue(resolved.isResolvedAppeal());
+        assertEquals("APPROVED", resolved.status());
+        assertEquals(900L, resolved.closedBy());
+        assertEquals("Las pruebas justifican la apelación", resolved.closeReason());
+        assertEquals("caso.html", resolved.transcriptPath());
+        assertNotNull(resolved.closedAt());
+        assertFalse(tickets.attachChannel(appeal, 8003));
+        assertFalse(tickets.hasOpenTicket(1, 410, TicketType.APPEAL));
+    }
+
+    @Test
+    void acceptsOnlyOneConcurrentAppealDecisionAndKeepsItsAudit() throws Exception {
+        long appeal = tickets.create(1, 8100L, 411, TicketType.APPEAL, "Jugador",
+                "Ban del juego", "Explicación de la apelación", null, "", List.of());
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var results = executor.invokeAll(List.<Callable<Boolean>>of(
+                    () -> tickets.resolveAppeal(appeal, 900, true, "Pruebas suficientes", "aprobada.html"),
+                    () -> tickets.resolveAppeal(appeal, 901, false, "Pruebas insuficientes", "rechazada.html")));
+            int changes = 0;
+            for (var result : results) if (result.get()) changes++;
+            assertEquals(1, changes);
+        }
+        var resolution = tickets.findById(appeal).orElseThrow();
+        if ("APPROVED".equals(resolution.status())) {
+            assertEquals(900L, resolution.closedBy());
+            assertEquals("Pruebas suficientes", resolution.closeReason());
+            assertEquals("aprobada.html", resolution.transcriptPath());
+        } else {
+            assertEquals("REJECTED", resolution.status());
+            assertEquals(901L, resolution.closedBy());
+            assertEquals("Pruebas insuficientes", resolution.closeReason());
+            assertEquals("rechazada.html", resolution.transcriptPath());
+        }
+        long help = create(412);
+        assertFalse(tickets.resolveAppeal(help, 900, true, "No es apelación", "otro.html"));
+        assertEquals("OPEN", tickets.findById(help).orElseThrow().status());
     }
 
     @Test

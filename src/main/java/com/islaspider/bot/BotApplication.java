@@ -90,6 +90,9 @@ public final class BotApplication {
         if (guild.getCategoryById(config.ticketCategoryId()) == null) {
             throw new IllegalStateException("TICKET_CATEGORY_ID no corresponde a una categoría del servidor");
         }
+        if (guild.getCategoryById(config.appealCategoryId()) == null) {
+            throw new IllegalStateException("APPEAL_CATEGORY_ID no corresponde a una categoría del servidor");
+        }
         if (guild.getTextChannelById(config.ticketLogChannelId()) == null) {
             throw new IllegalStateException("TICKET_LOG_CHANNEL_ID no corresponde a un canal de texto");
         }
@@ -117,6 +120,8 @@ public final class BotApplication {
         Member bot = guild.getSelfMember();
         Category category = guild.getCategoryById(config.ticketCategoryId());
         requirePermissions(bot, category, "la categoría de tickets",
+                Permission.VIEW_CHANNEL, Permission.MANAGE_CHANNEL);
+        requirePermissions(bot, guild.getCategoryById(config.appealCategoryId()), "la categoría de apelaciones",
                 Permission.VIEW_CHANNEL, Permission.MANAGE_CHANNEL);
 
         requireLogPermissions(bot, guild.getTextChannelById(config.ticketLogChannelId()), "logs de tickets");

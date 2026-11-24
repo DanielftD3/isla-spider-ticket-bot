@@ -91,6 +91,17 @@ public final class TicketRepository {
         return findOne("SELECT * FROM tickets WHERE id=?", ticketId);
     }
 
+    public boolean attachChannel(long ticketId, long channelId) {
+        String sql = "UPDATE tickets SET channel_id=? WHERE id=? AND channel_id IS NULL AND status='OPEN'";
+        try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, channelId);
+            statement.setLong(2, ticketId);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("No se pudo vincular el canal al caso", exception);
+        }
+    }
+
     private Optional<Ticket> findOne(String sql, long value) {
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, value);
@@ -103,17 +114,23 @@ public final class TicketRepository {
     }
 
     public boolean resolveAppeal(long ticketId, long moderatorId, boolean approved, String reason) {
+        return resolveAppeal(ticketId, moderatorId, approved, reason, null);
+    }
+
+    public boolean resolveAppeal(long ticketId, long moderatorId, boolean approved, String reason,
+                                 String transcriptPath) {
         String status = approved ? "APPROVED" : "REJECTED";
         String sql = """
                 UPDATE tickets
-                   SET status=?, closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?
+                   SET status=?, closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?, transcript_path=?
                  WHERE id=? AND type='APPEAL' AND status='OPEN'
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, status);
             statement.setLong(2, moderatorId);
             statement.setString(3, reason);
-            statement.setLong(4, ticketId);
+            statement.setString(4, transcriptPath);
+            statement.setLong(5, ticketId);
             return statement.executeUpdate() == 1;
         } catch (SQLException exception) {
             throw new IllegalStateException("No se pudo resolver la apelacion", exception);
@@ -126,7 +143,7 @@ public final class TicketRepository {
         String closeSql = """
                 UPDATE tickets
                    SET status='CLOSED', closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?, transcript_path=?
-                 WHERE id=? AND status='OPEN'
+                 WHERE id=? AND status='OPEN' AND type<>'APPEAL'
                 """;
         String feedbackSql = """
                 INSERT INTO ticket_feedback
@@ -175,7 +192,7 @@ public final class TicketRepository {
         String sql = """
                 UPDATE tickets
                    SET status='CLOSED', closed_at=CURRENT_TIMESTAMP, closed_by=?, close_reason=?, transcript_path=?
-                 WHERE id=? AND status='OPEN'
+                 WHERE id=? AND status='OPEN' AND type<>'APPEAL'
                 """;
         try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, closedBy);
@@ -279,7 +296,9 @@ public final class TicketRepository {
                 result.getString("game_name"), result.getString("subject"), result.getString("description"),
                 Database.nullableLong(result, "accused_user_id"), result.getString("evidence"),
                 result.getString("status"), Database.nullableLong(result, "claimed_by"),
-                database.readTimestamp(result, "created_at"));
+                database.readTimestamp(result, "created_at"), Database.nullableLong(result, "closed_by"),
+                result.getString("close_reason"), result.getString("transcript_path"),
+                database.readTimestamp(result, "closed_at"));
     }
 
     private void insertAttachment(Connection connection, long ticketId, Long messageId, long authorId,

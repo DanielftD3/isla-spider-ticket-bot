@@ -97,6 +97,7 @@ The integration suite initializes the schema and truncates its tables between te
 ## Architecture notes
 
 - `/setup` is the only slash command.
+- Para organizar Discord y configurar casos de apelación privados y numerados, consulta [CONFIGURACION_DISCORD.md](CONFIGURACION_DISCORD.md).
 - Regular workflows use Discord buttons, select menus, and modal forms.
 - Ticket, feedback, attachment, strike, and moderation data are persisted in SQLite or PostgreSQL. HTML transcripts are stored on disk.
 - SQLite uses a single connection with foreign keys enabled, WAL journaling, and a busy timeout; run only one bot instance against a SQLite file.

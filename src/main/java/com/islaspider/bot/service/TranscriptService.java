@@ -14,6 +14,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 public final class TranscriptService {
@@ -33,7 +34,8 @@ public final class TranscriptService {
 
         try {
             Files.createDirectories(config.transcriptDirectory());
-            Path output = config.transcriptDirectory().resolve("ticket-" + ticket.id() + ".html").toAbsolutePath();
+            String suffix = ticket.isResolvedAppeal() ? "-" + UUID.randomUUID() : "";
+            Path output = config.transcriptDirectory().resolve("ticket-" + ticket.id() + suffix + ".html").toAbsolutePath();
             Files.writeString(output, html, StandardCharsets.UTF_8);
             return output;
         } catch (IOException exception) {
@@ -62,6 +64,14 @@ public final class TranscriptService {
             body.append("</article>");
         }
 
+        String resolution = ticket.isResolvedAppeal() ? """
+                <section class="summary"><h2>Resolución del caso #%d</h2>
+                <p><b>Decisión:</b> %s</p><p><b>Resuelto por:</b> %d</p>
+                <p><b>Fecha:</b> %s</p><p><b>Motivo:</b> %s</p></section>
+                """.formatted(ticket.id(), "APPROVED".equals(ticket.status()) ? "APROBADA" : "RECHAZADA",
+                ticket.closedBy(), ticket.closedAt().withOffsetSameInstant(ZoneOffset.UTC).format(DATE_FORMAT),
+                withBreaks(ticket.closeReason())) : "";
+
         String html = """
                 <!doctype html><html lang="es"><head><meta charset="utf-8">
                 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -74,12 +84,12 @@ public final class TranscriptService {
                 <section class="summary"><p><b>Tipo:</b> %s</p><p><b>Nombre en el juego:</b> %s</p>
                 <p><b>Usuario de Discord:</b> %d</p>
                 <p><b>Asunto:</b> %s</p><p><b>Descripción:</b> %s</p>
-                <p><b>Jugador reportado:</b> %s</p><p><b>Pruebas iniciales:</b> %s</p></section>%s</main></body></html>
+                <p><b>Jugador reportado:</b> %s</p><p><b>Pruebas iniciales:</b> %s</p></section>%s%s</main></body></html>
                 """.formatted(ticket.id(), ticket.id(), escape(ticket.type().label()), escape(ticket.gameName()),
                 ticket.openerId(), escape(ticket.subject()), withBreaks(ticket.description()),
                 ticket.accusedUserId() == null ? "No aplica" : escape(String.valueOf(ticket.accusedUserId())),
                 ticket.evidence() == null || ticket.evidence().isBlank() ? "Sin pruebas iniciales" : withBreaks(ticket.evidence()),
-                body);
+                resolution, body);
         return html;
     }
 

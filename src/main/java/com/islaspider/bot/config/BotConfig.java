@@ -1,5 +1,7 @@
 package com.islaspider.bot.config;
 
+import com.islaspider.bot.model.TicketType;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,6 +12,7 @@ public record BotConfig(
         String discordToken,
         long guildId,
         long ticketCategoryId,
+        long appealCategoryId,
         long ticketLogChannelId,
         long ticketImageChannelId,
         long ticketTranscriptChannelId,
@@ -48,6 +51,7 @@ public record BotConfig(
     }
 
     static BotConfig from(Map<String, String> values) {
+        long ticketCategoryId = requiredId(values, "TICKET_CATEGORY_ID");
         long ticketLogChannelId = requiredId(values, "TICKET_LOG_CHANNEL_ID");
         String databaseUrl = values.getOrDefault("DB_URL", "jdbc:sqlite:data/ark-dinosauria.db").trim();
         if (databaseUrl.isBlank()) databaseUrl = "jdbc:sqlite:data/ark-dinosauria.db";
@@ -58,7 +62,8 @@ public record BotConfig(
         return new BotConfig(
                 required(values, "DISCORD_TOKEN"),
                 requiredId(values, "GUILD_ID"),
-                requiredId(values, "TICKET_CATEGORY_ID"),
+                ticketCategoryId,
+                optionalId(values, "APPEAL_CATEGORY_ID", ticketCategoryId),
                 ticketLogChannelId,
                 optionalId(values, "TICKET_IMAGE_CHANNEL_ID", ticketLogChannelId),
                 optionalId(values, "TICKET_TRANSCRIPT_CHANNEL_ID", ticketLogChannelId),
@@ -77,6 +82,14 @@ public record BotConfig(
                 integer(values, "STRIKE_MUTE_HOURS", 24),
                 bool(values, "AUTO_APPLY_STRIKE_SANCTIONS", false)
         );
+    }
+
+    public long categoryIdFor(TicketType type) {
+        return type == TicketType.APPEAL ? appealCategoryId : ticketCategoryId;
+    }
+
+    public long responsibleRoleIdFor(TicketType type) {
+        return type.requiresModeration() ? moderatorRoleId : staffRoleId;
     }
 
     private static void loadDotEnv(Path path, Map<String, String> destination) {

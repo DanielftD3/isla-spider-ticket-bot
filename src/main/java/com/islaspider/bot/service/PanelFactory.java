@@ -76,11 +76,11 @@ public final class PanelFactory {
 
                         [**⚖️**](https://discord.com/assets/b5138bdc32633d55.svg) **Apelar strike o ban**
 
-                        Selecciona la sanción que quieres apelar y explica tu caso. No se abrirá un ticket: la administración revisará tu solicitud y te responderá por mensaje directo.
+                        Explica qué sanción deseas apelar e incluye su número o referencia si lo tienes. Se abrirá un **ticket privado de apelación con número de caso**. Moderación revisará tus pruebas y dejará una resolución con su motivo dentro del ticket.
 
                         [**📌**](https://discord.com/assets/c7ba45651998dd2c.svg) **Importante**
 
-                        No hagas spam, no menciones repetidamente al equipo y no compartas información personal. Cuando el caso quede resuelto, podrás valorar la atención recibida.
+                        No hagas spam, no menciones repetidamente al equipo y no compartas información personal. En soporte podrás valorar la atención recibida. Las apelaciones finalizan con una decisión de Moderación y su motivo.
                         """)
                 .setImage("attachment://" + PANEL_IMAGE_NAME)
                 .setFooter("Selecciona una categoría para comenzar")
@@ -105,6 +105,16 @@ public final class PanelFactory {
                 Button.danger(DELETE_BUTTON_ID, "Eliminar ticket")
                         .withEmoji(Emoji.fromUnicode("🗑️"))
         );
+    }
+
+    public ActionRow appealControls(long caseId) {
+        return ActionRow.of(
+                Button.success("appeal:approve:" + caseId, "Aprobar apelación"),
+                Button.danger("appeal:reject:" + caseId, "Rechazar apelación"));
+    }
+
+    public ActionRow resolvedAppealControls(long caseId) {
+        return ActionRow.of(Button.secondary("appeal:archive:" + caseId, "Archivar canal del caso"));
     }
 
     public List<ActionRow> surveyStaffMenus(long ticketId, List<Member> staffMembers) {

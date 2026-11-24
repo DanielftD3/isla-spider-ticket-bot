@@ -18,5 +18,12 @@ class TicketTypeTest {
     void rejectsUnknownCode() {
         assertThrows(IllegalArgumentException.class, () -> TicketType.fromCode("otro"));
     }
+
+    @Test
+    void numbersChannelsWithThePersistentCaseId() {
+        assertEquals("apelacion-0007", TicketType.APPEAL.channelName(7));
+        assertEquals("reporte-10000", TicketType.REPORT.channelName(10000));
+        assertThrows(IllegalArgumentException.class, () -> TicketType.HELP.channelName(0));
+    }
 }
 

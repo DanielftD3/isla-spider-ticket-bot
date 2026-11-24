@@ -1,6 +1,7 @@
 package com.islaspider.bot.config;
 
 import org.junit.jupiter.api.Test;
+import com.islaspider.bot.model.TicketType;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -22,6 +23,23 @@ class BotConfigTest {
         assertEquals(6L, config.ticketTranscriptChannelId());
         assertEquals(9L, config.ticketRatingChannelId());
         assertEquals(4L, config.appealLogChannelId());
+        assertEquals(config.ticketCategoryId(), config.appealCategoryId());
+    }
+
+    @Test
+    void separatesAppealCasesAndAssignsThemToModeration() {
+        Map<String, String> values = requiredValues();
+        values.put("APPEAL_CATEGORY_ID", "20");
+        values.put("APPEAL_LOG_CHANNEL_ID", "21");
+        BotConfig config = BotConfig.from(values);
+        assertEquals(20L, config.categoryIdFor(TicketType.APPEAL));
+        assertEquals(21L, config.appealLogChannelId());
+        assertEquals(2L, config.categoryIdFor(TicketType.HELP));
+        assertEquals(config.moderatorRoleId(), config.responsibleRoleIdFor(TicketType.APPEAL));
+        assertEquals(config.moderatorRoleId(), config.responsibleRoleIdFor(TicketType.REPORT));
+        assertEquals(config.staffRoleId(), config.responsibleRoleIdFor(TicketType.BUG));
+        values.put("APPEAL_CATEGORY_ID", "YOUR_CATEGORY_ID");
+        assertThrows(IllegalStateException.class, () -> BotConfig.from(values));
     }
 
     @Test

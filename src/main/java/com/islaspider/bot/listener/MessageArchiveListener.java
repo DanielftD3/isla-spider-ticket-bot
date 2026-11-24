@@ -31,8 +31,7 @@ public final class MessageArchiveListener extends ListenerAdapter {
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
         if (!event.isFromGuild() || event.getGuild().getIdLong() != config.guildId() || event.getAuthor().isBot()) return;
-        if (!(event.getChannel() instanceof TextChannel textChannel)
-                || textChannel.getParentCategoryIdLong() != config.ticketCategoryId()) return;
+        if (!(event.getChannel() instanceof TextChannel textChannel)) return;
         Ticket ticket = tickets.findByChannel(textChannel.getIdLong()).orElse(null);
         if (ticket == null || !"OPEN".equals(ticket.status())) return;
 
@@ -68,7 +67,7 @@ public final class MessageArchiveListener extends ListenerAdapter {
         EmbedBuilder embed = new EmbedBuilder()
                 .setColor(new Color(52, 152, 219))
                 .setTitle(title)
-                .addField("Ticket", event.getChannel().getAsMention(), true)
+                .addField("Caso", "#" + ticket.id() + " · " + event.getChannel().getAsMention(), true)
                 .addField("Enviado por", event.getAuthor().getAsMention(), true)
                 .addField("Archivos", String.valueOf(fileCount), true)
                 .setTimestamp(event.getMessage().getTimeCreated());

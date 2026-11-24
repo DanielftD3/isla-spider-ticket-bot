@@ -19,6 +19,7 @@ No es un servicio con disponibilidad garantizada. Si no renuevas o superas los r
 2. Crea un despliegue de tipo Application y elige Java 21. Si el panel no ofrece Java 21, este JAR no puede ejecutarse con versiones anteriores.
 3. Descarga el artefacto **ark-dinosauria-hosting** de un Build aprobado en [GitHub Actions](https://github.com/DanielftD3/isla-spider-ticket-bot/actions). Extrae el ZIP y sube su contenido desde el gestor de archivos del alojamiento. No intentes compilar Maven dentro de los 256 MB.
 4. Configura las variables de Discord del archivo `.env.example` en Environment; marca `DISCORD_TOKEN` como secreto. También puedes crear un `.env` privado allí. No lo subas a GitHub ni lo compartas.
+   Para las categorías, canales y casos privados de apelación, sigue [CONFIGURACION_DISCORD.md](CONFIGURACION_DISCORD.md). `APPEAL_CATEGORY_ID` permite separar las apelaciones de los tickets normales.
 5. Para almacenamiento utiliza:
    - `DB_URL=jdbc:sqlite:data/ark-dinosauria.db`
    - `TRANSCRIPT_DIR=data/transcripts`
